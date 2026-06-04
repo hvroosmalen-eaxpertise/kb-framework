@@ -17,6 +17,7 @@ from pathlib import Path
 
 import anthropic
 import yaml
+from dotenv import load_dotenv
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
 
@@ -103,6 +104,92 @@ def determine_output_path(docs_root: Path, frontmatter: dict, source_name: str) 
     else:
         return docs_root / f"{source_name}.md"
 
+# ── Nav update ────────────────────────────────────────────────────────────────
+
+def _update_nav(mkdocs_yml: Path, out_path: Path, docs_root: Path, title: str, frontmatter: dict):
+    """Insert a newly ingested page into the mkdocs.yml nav under the correct section."""
+    config = yaml.safe_load(mkdocs_yml.read_text(encoding="utf-8"))
+    nav = config.get("nav", [])
+    rel = str(out_path.relative_to(docs_root)).replace("\\", "/")
+
+    content_type = frontmatter.get("content_type", "report")
+    year = str(frontmatter.get("source_year", datetime.date.today().year))
+
+    if content_type != "report":
+        return  # Only auto-nav reports for now; standards/frameworks are hand-authored
+
+    # Find or create the Reports section
+    reports_entry = next((item for item in nav if isinstance(item, dict) and "Reports" in item), None)
+    if reports_entry is None:
+        nav.append({"Reports": []})
+        reports_entry = nav[-1]
+
+    reports_list = reports_entry["Reports"]
+    if not isinstance(reports_list, list):
+        reports_list = []
+        reports_entry["Reports"] = reports_list
+
+    # Find or create the year subsection
+    year_entry = next((item for item in reports_list if isinstance(item, dict) and year in item), None)
+    if year_entry is None:
+        reports_list.append({year: [{"Overview": f"reports/{year}/index.md"}]})
+        year_entry = reports_list[-1]
+
+    year_list = year_entry[year]
+    if not isinstance(year_list, list):
+        year_list = []
+        year_entry[year] = year_list
+
+    # Skip if already registered
+    if any(rel in item.values() for item in year_list if isinstance(item, dict)):
+        return
+
+    year_list.append({title: rel})
+    config["nav"] = nav
+    mkdocs_yml.write_text(
+        yaml.dump(config, allow_unicode=True, sort_keys=False, default_flow_style=False),
+        encoding="utf-8",
+    )
+
+
+# ── Changelog ─────────────────────────────────────────────────────────────────
+
+def _append_changelog(changelog: Path, pdf_name: str, out_path: Path, docs_root: Path, frontmatter: dict):
+    today = datetime.date.today().isoformat()
+    rel   = out_path.relative_to(docs_root)
+    title = frontmatter.get("title", out_path.stem)
+    domain = ", ".join(frontmatter.get("domain", [])) or "—"
+
+    entry = f"- **{pdf_name}** → `{rel}` — {title} (domain: {domain})\n"
+
+    if not changelog.exists():
+        changelog.write_text(f"# Changelog\n\n## {today}\n\n### Added (ingested)\n{entry}", encoding="utf-8")
+        return
+
+    text = changelog.read_text(encoding="utf-8")
+
+    # Insert under existing date heading if present, else prepend a new date section
+    date_heading = f"## {today}"
+    section_heading = "### Added (ingested)"
+
+    if date_heading in text:
+        if section_heading in text:
+            # Append to the existing "Added (ingested)" block for today
+            insert_after = text.index(section_heading) + len(section_heading)
+            text = text[:insert_after] + "\n" + entry + text[insert_after:]
+        else:
+            # Add the section heading after today's date heading
+            insert_after = text.index(date_heading) + len(date_heading)
+            text = text[:insert_after] + f"\n\n{section_heading}\n{entry}" + text[insert_after:]
+    else:
+        # Prepend a new date block after the first heading line
+        first_newline = text.index("\n") + 1
+        new_block = f"\n## {today}\n\n{section_heading}\n{entry}\n---\n\n"
+        text = text[:first_newline] + new_block + text[first_newline:]
+
+    changelog.write_text(text, encoding="utf-8")
+
+
 # ── Main ingest ────────────────────────────────────────────────────────────────
 
 def ingest_pdf(pdf_path: Path, paths: dict, framework_path: Path, kb_config: dict):
@@ -157,6 +244,25 @@ def ingest_pdf(pdf_path: Path, paths: dict, framework_path: Path, kb_config: dic
         shutil.move(str(pdf_path), str(dest))
         log(ingest_log, "INFO", f"DONE {pdf_path.name} → {out_path.name}")
 
+        # 7. Append to CHANGELOG.md
+        _append_changelog(
+            changelog=paths["logs"].parent / "CHANGELOG.md",
+            pdf_name=pdf_path.name,
+            out_path=out_path,
+            docs_root=paths["docs"],
+            frontmatter=frontmatter,
+        )
+
+        # 8. Register page in mkdocs.yml nav
+        page_title = frontmatter.get("title", out_path.stem.replace("-", " ").title())
+        _update_nav(
+            mkdocs_yml=paths["logs"].parent / "mkdocs.yml",
+            out_path=out_path,
+            docs_root=paths["docs"],
+            title=page_title,
+            frontmatter=frontmatter,
+        )
+
         return out_path
 
     except Exception as e:
@@ -172,11 +278,16 @@ def main():
     parser.add_argument("--file", help="Process a single PDF file")
     args = parser.parse_args()
 
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
     kb_root      = Path(args.kb).resolve()
+    load_dotenv(kb_root / ".env")
     paths        = resolve_paths(kb_root)
     config_file  = paths["config"]
     kb_config    = yaml.safe_load(config_file.read_text()) if config_file.exists() else {}
-    framework_path = Path(kb_config.get("framework_path", kb_root / "framework")).resolve()
+    fw_raw = kb_config.get("framework_path", "framework")
+    framework_path = (kb_root / fw_raw).resolve()
 
     pdfs = [Path(args.file)] if args.file else sorted(paths["inbox"].glob("*.pdf"))
     if not pdfs:

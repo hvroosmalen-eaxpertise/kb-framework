@@ -42,7 +42,7 @@ def main():
 
     # 1. Build wiki
     log_change(logs_dir, "BUILD_START")
-    result = run(["mkdocs", "build", "--clean"], cwd=kb_root)
+    result = run([sys.executable, "-m", "mkdocs", "build", "--clean"], cwd=kb_root)
     if result.returncode != 0:
         log_change(logs_dir, "BUILD_FAILED")
         sys.exit(1)

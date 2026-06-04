@@ -135,7 +135,8 @@ def main():
     kb_root = Path(args.kb).resolve()
     config  = kb_root / "config" / "kb.yaml"
     kb_cfg  = yaml.safe_load(config.read_text()) if config.exists() else {}
-    fw_path = Path(kb_cfg.get("framework_path", kb_root / "framework")).resolve()
+    fw_raw  = kb_cfg.get("framework_path", "framework")
+    fw_path = (kb_root / fw_raw).resolve()
 
     if args.model:
         build_model(kb_root, fw_path, args.model)
