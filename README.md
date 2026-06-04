@@ -18,12 +18,12 @@ Each agent is a markdown file containing a system prompt used by `pipeline/inges
 
 | Agent | Purpose |
 |---|---|
-| `wikipedia-style.md` | Rewrites raw extracted text into a neutral encyclopaedic article |
-| `tagger.md` | Generates YAML frontmatter (title, domain, content_type, status) |
-| `summarizer.md` | Produces a one-paragraph summary for the frontmatter `summary` field |
-| `term-enricher.md` | Extracts domain terms and proposes glossary entries |
-| `cross-ref-finder.md` | Identifies cross-references to other articles in the knowledge base |
-| `model-builder.md` | Derives semantic model fragments from article content |
+| [`wikipedia-style.md`](agents/wikipedia-style.md) | Rewrites raw extracted text into a neutral encyclopaedic article |
+| [`tagger.md`](agents/tagger.md) | Generates YAML frontmatter (title, domain, content_type, status) |
+| [`summarizer.md`](agents/summarizer.md) | Produces a one-paragraph summary for the frontmatter `summary` field |
+| [`term-enricher.md`](agents/term-enricher.md) | Extracts domain terms and proposes glossary entries |
+| [`cross-ref-finder.md`](agents/cross-ref-finder.md) | Identifies cross-references to other articles in the knowledge base |
+| [`model-builder.md`](agents/model-builder.md) | Derives semantic model fragments from article content |
 
 ## Rules
 
@@ -31,11 +31,11 @@ Editorial rules enforced by agents and human authors alike.
 
 | Rule file | Covers |
 |---|---|
-| `writing-style.md` | Wikipedia NPOV style, article structure, language rules |
-| `tagging.md` | How to assign `domain`, `content_type`, and `status` tags |
-| `term-definition.md` | How to write glossary entries (definition, synonyms, related terms) |
-| `cross-referencing.md` | When and how to add `[[wikilinks]]` to other articles |
-| `quality-checklist.md` | Pre-publish checklist — completeness, citations, links |
+| [`writing-style.md`](rules/writing-style.md) | Wikipedia NPOV style, article structure, language rules |
+| [`tagging.md`](rules/tagging.md) | How to assign `domain`, `content_type`, and `status` tags |
+| [`term-definition.md`](rules/term-definition.md) | How to write glossary entries (definition, synonyms, related terms) |
+| [`cross-referencing.md`](rules/cross-referencing.md) | When and how to add `[[wikilinks]]` to other articles |
+| [`quality-checklist.md`](rules/quality-checklist.md) | Pre-publish checklist — completeness, citations, links |
 
 ## Schemas
 
@@ -43,17 +43,17 @@ YAML frontmatter schemas defining required and optional fields per content type.
 
 | Schema | Content type |
 |---|---|
-| `standard.yaml` | Mandatory standards and directives (ESRS, CSRD, EU Taxonomy) |
-| `report.yaml` | Ingested source documents and sustainability reports |
-| `term.yaml` | Glossary entries |
+| [`standard.yaml`](schemas/standard.yaml) | Mandatory standards and directives (ESRS, CSRD, EU Taxonomy) |
+| [`report.yaml`](schemas/report.yaml) | Ingested source documents and sustainability reports |
+| [`term.yaml`](schemas/term.yaml) | Glossary entries |
 
 ## Pipeline Scripts
 
 | Script | Usage |
 |---|---|
-| `ingest.py` | Process PDFs from `pipeline/inbox/` → enriched Markdown in `docs/` |
-| `rebuild.py` | Run `mkdocs build` and optionally commit + push the result |
-| `query.py` | Query the knowledge base (cross-ref matrix, model export) |
+| [`ingest.py`](pipeline/ingest.py) | Process PDFs from `pipeline/inbox/` → enriched Markdown in `docs/` |
+| [`rebuild.py`](pipeline/rebuild.py) | Run `mkdocs build` and optionally commit + push the result |
+| [`query.py`](pipeline/query.py) | Query the knowledge base (cross-ref matrix, model export) |
 
 ### Ingesting a document
 
