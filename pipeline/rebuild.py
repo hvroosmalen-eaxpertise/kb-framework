@@ -33,7 +33,9 @@ def run(cmd: list, cwd: Path) -> subprocess.CompletedProcess:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--kb", required=True)
-    parser.add_argument("--no-git", action="store_true", help="Skip git commit/push")
+    parser.add_argument("--no-git", action="store_true", help="Skip git commit")
+    parser.add_argument("--push", action="store_true",
+                        help="Push to remote after committing (default: commit locally only, for review)")
     args = parser.parse_args()
 
     kb_root  = Path(args.kb).resolve()
@@ -65,7 +67,11 @@ def main():
     run(["git", "commit", "-m", commit_msg], cwd=kb_root)
     log_change(logs_dir, f"COMMITTED: {commit_msg}")
 
-    # 3. Push
+    # 3. Push only when explicitly requested — otherwise the commit waits for review.
+    if not args.push:
+        log_change(logs_dir, "NOT_PUSHED — committed locally; review the diff then `git push`")
+        return
+
     push = run(["git", "push"], cwd=kb_root)
     if push.returncode == 0:
         log_change(logs_dir, "PUSHED to remote")

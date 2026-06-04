@@ -7,6 +7,7 @@ Usage:
 """
 
 import os
+import re
 import sys
 import json
 import shutil
@@ -103,6 +104,114 @@ def determine_output_path(docs_root: Path, frontmatter: dict, source_name: str) 
         return docs_root / "reports" / year / f"{source_name}.md"
     else:
         return docs_root / f"{source_name}.md"
+
+# ── Domain merge (Layer 1) ──────────────────────────────────────────────────────
+
+DOMAIN_INDEX = {
+    "ESRS": "standards/esrs/index.md",
+    "CSRD": "standards/csrd/index.md",
+    "EU-TAXONOMY": "standards/eu-taxonomy/index.md",
+    "VSME": "standards/vsme/index.md",
+    "GHG": "standards/ghg-protocol/index.md",
+    "GHG-PROTOCOL": "standards/ghg-protocol/index.md",
+    "SDG": "frameworks/un-sdgs/index.md",
+    "GRI": "frameworks/gri/index.md",
+    "TCFD": "frameworks/tcfd/index.md",
+}
+
+MERGEABLE_TYPES = {"standard", "directive", "framework"}
+
+
+def split_frontmatter(text: str):
+    if text.startswith("---"):
+        parts = text.split("---", 2)
+        if len(parts) >= 3:
+            return (yaml.safe_load(parts[1]) or {}), parts[2].strip()
+    return {}, text.strip()
+
+
+def domain_index_path(docs_root: Path, frontmatter: dict):
+    """The canonical index.md a mergeable article should fold into, or None."""
+    if frontmatter.get("content_type") not in MERGEABLE_TYPES:
+        return None
+    for d in frontmatter.get("domain", []) or []:
+        rel = DOMAIN_INDEX.get(str(d).upper())
+        if rel:
+            return docs_root / rel
+    return None
+
+
+def merge_into_domain(framework_path: Path, existing_body: str, new_body: str, source_meta: str) -> str:
+    prompt = load_agent_prompt(framework_path, "domain-merge")
+    user_input = (
+        f"{source_meta}\n\n=== EXISTING ARTICLE ===\n\n{existing_body}\n\n"
+        f"=== NEW MATERIAL ===\n\n{new_body[:8000]}"
+    )
+    return call_claude(prompt, user_input)
+
+
+def merge_frontmatter(existing_fm: dict, new_fm: dict, source_file: str) -> dict:
+    fm = dict(existing_fm)
+    fm["date_updated"] = datetime.date.today().isoformat()
+    sources = fm.get("sources") or []
+    if source_file not in sources:
+        sources.append(source_file)
+    fm["sources"] = sources
+    topics = list(dict.fromkeys((fm.get("topics") or []) + (new_fm.get("topics") or [])))
+    if topics:
+        fm["topics"] = topics
+    return fm
+
+
+# ── Glossary upsert (Layer 2) ─────────────────────────────────────────────────
+
+def _split_glossary(text: str):
+    parts = re.split(r"(?m)^(?=### )", text)
+    preamble = parts[0]
+    entries = []
+    for block in parts[1:]:
+        m = re.match(r"### (.+)", block)
+        entries.append((m.group(1).strip() if m else "", block))
+    return preamble, entries
+
+
+def _norm_block(block: str) -> str:
+    body = re.sub(r"\n+---\s*$", "", block.rstrip()).rstrip()
+    return body + "\n\n---\n\n"
+
+
+def upsert_glossary(glossary_text: str, new_entries_md: str) -> str:
+    """Term-level merge: update an existing `### Term` in place, else append."""
+    preamble, entries = _split_glossary(glossary_text)
+    index = {t.lower(): i for i, (t, _) in enumerate(entries)}
+    _, new_entries = _split_glossary(new_entries_md)
+    for term, block in new_entries:
+        if not term:
+            continue
+        key = term.lower()
+        if key in index:
+            entries[index[key]] = (term, block)
+        else:
+            index[key] = len(entries)
+            entries.append((term, block))
+    body = "".join(_norm_block(b) for _, b in entries)
+    pre = re.sub(r"\n+---\s*$", "", preamble.rstrip()).rstrip()
+    return pre + "\n\n---\n\n" + body
+
+
+def enrich_glossary(paths: dict, framework_path: Path, article_md: str, source_meta: str, enrich_log: Path):
+    glossary = paths["docs"] / "glossary.md"
+    if not glossary.exists():
+        return
+    prompt = load_agent_prompt(framework_path, "term-enricher")
+    entries = call_claude(prompt, f"{source_meta}\n\n---\n\n{article_md[:8000]}")
+    if "###" not in entries:
+        return
+    merged = upsert_glossary(glossary.read_text(encoding="utf-8"), entries)
+    glossary.write_text(merged, encoding="utf-8")
+    count = len(re.findall(r"(?m)^### ", entries))
+    log(enrich_log, "INFO", f"GLOSSARY_UPSERT {count} entries")
+
 
 # ── Nav update ────────────────────────────────────────────────────────────────
 
@@ -229,15 +338,34 @@ def ingest_pdf(pdf_path: Path, paths: dict, framework_path: Path, kb_config: dic
         frontmatter["source_file"] = pdf_path.name
         log(enrich_log, "INFO", f"TAGGED {pdf_path.name} → domain={frontmatter.get('domain')}")
 
-        # 4. Assemble final file
-        fm_block = "---\n" + yaml.dump(frontmatter, allow_unicode=True, sort_keys=False) + "---\n\n"
-        final_content = fm_block + article_md
+        # 4. Determine target and assemble content (Layer 1: domain merge)
+        target_index = domain_index_path(paths["docs"], frontmatter)
+        if target_index is not None and target_index.exists():
+            # Mergeable type with an existing canonical page → grow that page.
+            existing_fm, existing_body = split_frontmatter(target_index.read_text(encoding="utf-8"))
+            merged_body = merge_into_domain(framework_path, existing_body, article_md, source_meta)
+            merged_fm   = merge_frontmatter(existing_fm, frontmatter, pdf_path.name)
+            fm_block      = "---\n" + yaml.dump(merged_fm, allow_unicode=True, sort_keys=False) + "---\n\n"
+            final_content = fm_block + merged_body
+            out_path      = target_index
+            log(enrich_log, "INFO", f"MERGED {pdf_path.name} → {out_path.name}")
+        else:
+            # New domain page, or a standalone type (report/term) → write fresh.
+            fm_block      = "---\n" + yaml.dump(frontmatter, allow_unicode=True, sort_keys=False) + "---\n\n"
+            final_content = fm_block + article_md
+            out_path      = target_index if target_index is not None \
+                else determine_output_path(paths["docs"], frontmatter, source_name)
 
         # 5. Write to docs
-        out_path = determine_output_path(paths["docs"], frontmatter, source_name)
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(final_content, encoding="utf-8")
         log(ingest_log, "INFO", f"WRITTEN {out_path.relative_to(paths['docs'].parent)}")
+
+        # 5b. Enrich the shared glossary (Layer 2)
+        try:
+            enrich_glossary(paths, framework_path, article_md, source_meta, enrich_log)
+        except Exception as e:
+            log(enrich_log, "WARN", f"GLOSSARY_SKIP {pdf_path.name}: {e}")
 
         # 6. Move PDF to processed
         dest = paths["processed"] / pdf_path.name
@@ -303,7 +431,12 @@ def main():
             continue
 
     if ingested:
-        # Trigger rebuild
+        # Regenerate derived layers: cross-reference matrix + cross-domain synthesis (Layer 3)
+        query_script = framework_path / "pipeline" / "query.py"
+        if query_script.exists():
+            subprocess.run([sys.executable, str(query_script), "--kb", str(kb_root),
+                            "--cross-ref", "--synthesis"])
+        # Build and commit locally (no auto-push — the merged/synthesised diffs get reviewed)
         rebuild_script = framework_path / "pipeline" / "rebuild.py"
         if rebuild_script.exists():
             subprocess.run([sys.executable, str(rebuild_script), "--kb", str(kb_root)])
