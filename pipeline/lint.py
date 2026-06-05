@@ -148,7 +148,7 @@ def check_missing_xrefs(articles: list[dict], ignore: set[str]) -> list[Finding]
         rel = a["rel_path"].as_posix()
         if rel == "glossary.md":
             continue
-        plain = WIKILINK_RE.sub(" ", a["text"]).lower()
+        plain = re.sub(r"\s+", " ", WIKILINK_RE.sub(" ", a["text"]).lower())
         for term in terms:
             n = _norm(term)
             if n in ignore:
@@ -188,13 +188,14 @@ def run_deterministic(kb_root: Path, config: dict) -> tuple[list[Finding], bool]
 
 def run_deep(kb_root: Path, config: dict) -> list[Finding]:
     articles = load(kb_root)
-    fw_raw = (config or {}).get("framework_path", "../kb-framework")
-    fw_path = (kb_root / fw_raw).resolve()
-    prompt = load_agent_prompt(fw_path, "linter")
-
     canon = [a for a in articles
              if a["rel_path"].parts[0] in ("standards", "frameworks")
              and a["rel_path"].name == "index.md"]
+    if not canon:
+        return []
+    fw_raw = (config or {}).get("framework_path", "../kb-framework")
+    fw_path = (kb_root / fw_raw).resolve()
+    prompt = load_agent_prompt(fw_path, "linter")
     blocks = "\n\n---\n\n".join(
         f"# PAGE: {a['rel_path'].as_posix()}\n{_strip_frontmatter(a['text'])[:4000]}"
         for a in canon)
