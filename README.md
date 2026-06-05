@@ -24,6 +24,7 @@ Each agent is a markdown file containing a system prompt used by `pipeline/inges
 | [`term-enricher.md`](agents/term-enricher.md) | Extracts domain terms and proposes glossary entries |
 | [`cross-ref-finder.md`](agents/cross-ref-finder.md) | Identifies cross-references to other articles in the knowledge base |
 | [`model-builder.md`](agents/model-builder.md) | Derives semantic model fragments from article content |
+| [`linter.md`](agents/linter.md) | Flags factual contradictions between canonical pages (`lint.py --deep`) |
 
 ## Rules
 
@@ -41,6 +42,8 @@ Editorial rules enforced by agents and human authors alike.
 
 YAML frontmatter schemas defining required and optional fields per content type.
 
+See [`schemas/README.md`](schemas/README.md) for the schema overview (the three layers, frontmatter, operations).
+
 | Schema | Content type |
 |---|---|
 | [`standard.yaml`](schemas/standard.yaml) | Mandatory standards and directives (ESRS, CSRD, EU Taxonomy) |
@@ -53,7 +56,8 @@ YAML frontmatter schemas defining required and optional fields per content type.
 |---|---|
 | [`ingest.py`](pipeline/ingest.py) | Process PDFs from `pipeline/inbox/` → enriched Markdown in `docs/` |
 | [`rebuild.py`](pipeline/rebuild.py) | Run `mkdocs build` and optionally commit + push the result |
-| [`query.py`](pipeline/query.py) | Query the knowledge base (cross-ref matrix, model export) |
+| [`query.py`](pipeline/query.py) | Regenerate derived artefacts: `--synthesis`, `--cross-ref`, `--model`, `--catalog` |
+| [`lint.py`](pipeline/lint.py) | Health-check the KB: orphans, stale/dangling sources, missing cross-refs; `--deep` adds contradiction detection |
 
 ### Ingesting a document
 
@@ -69,9 +73,11 @@ On success the pipeline:
 2. Calls Claude to rewrite the content in Wikipedia style
 3. Calls Claude to generate YAML frontmatter (title, domain, tags)
 4. Writes the enriched Markdown to `docs/` in the knowledge base
-5. Appends an entry to the KB's `CHANGELOG.md`
-6. Registers the new page in `mkdocs.yml` nav
-7. Moves the PDF to `pipeline/processed/`
+5. Merges new facts into the canonical domain `index.md` (not a parallel page)
+6. Upserts extracted terms into `glossary.md`
+7. Regenerates synthesis pages, the cross-reference matrix, and the catalog
+8. Runs a warn-only deterministic lint, then commits locally (no push)
+9. Moves the PDF to `pipeline/processed/`
 
 Failed PDFs move to `pipeline/failed/` with a log entry in `logs/ingestion.log`.
 
