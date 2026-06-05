@@ -43,3 +43,25 @@ def test_parse_splitter_output_keeps_known_domains_only():
 
 def test_parse_splitter_output_empty_when_no_sections():
     assert bootstrap.parse_splitter_output("nothing here", ["ESRS"]) == {}
+
+
+def test_parse_nav_and_scaffold(tmp_path: Path):
+    (tmp_path / "mkdocs.yml").write_text(
+        "site_name: T\nnav:\n"
+        "  - Home: index.md\n"
+        "  - Standards:\n"
+        "    - ESRS: standards/esrs/index.md\n"
+        "  - Glossary: glossary.md\n", encoding="utf-8")
+    docs = tmp_path / "docs"; docs.mkdir()
+    (docs / "glossary.md").write_text("---\ntitle: Glossary\n---\n\n# Glossary\n", encoding="utf-8")
+
+    pairs = bootstrap.parse_nav(tmp_path / "mkdocs.yml")
+    assert ("ESRS", "standards/esrs/index.md") in pairs
+    assert ("Home", "index.md") in pairs
+
+    created = bootstrap.scaffold_missing(tmp_path)
+    assert "index.md" in created and "standards/esrs/index.md" in created
+    assert "glossary.md" not in created
+    stub = (docs / "standards/esrs/index.md").read_text(encoding="utf-8")
+    assert "title: ESRS" in stub and "# ESRS" in stub
+    assert "[[" not in stub
