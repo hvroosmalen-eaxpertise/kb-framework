@@ -247,6 +247,7 @@ def main():
     parser.add_argument("--model",     choices=["semantic-model", "concept-map", "ontology"])
     parser.add_argument("--cross-ref", action="store_true")
     parser.add_argument("--synthesis", action="store_true")
+    parser.add_argument("--catalog",   action="store_true")
     args = parser.parse_args()
 
     kb_root = Path(args.kb).resolve()
@@ -261,6 +262,9 @@ def main():
         build_cross_ref(kb_root)
     if args.synthesis:
         build_synthesis(kb_root, fw_path)
+    if args.catalog:
+        from catalog import build_catalog
+        build_catalog(kb_root)
 
 
 if __name__ == "__main__":
