@@ -25,6 +25,7 @@ Each agent is a markdown file containing a system prompt used by `pipeline/inges
 | [`cross-ref-finder.md`](agents/cross-ref-finder.md) | Identifies cross-references to other articles in the knowledge base |
 | [`model-builder.md`](agents/model-builder.md) | Derives semantic model fragments from article content |
 | [`linter.md`](agents/linter.md) | Flags factual contradictions between canonical pages (`lint.py --deep`) |
+| [`splitter.md`](agents/splitter.md) | Fans one source across the domains it substantively covers (`bootstrap.py`) |
 
 ## Rules
 
@@ -58,6 +59,7 @@ See [`schemas/README.md`](schemas/README.md) for the schema overview (the three 
 | [`rebuild.py`](pipeline/rebuild.py) | Run `mkdocs build` and optionally commit + push the result |
 | [`query.py`](pipeline/query.py) | Regenerate derived artefacts: `--synthesis`, `--cross-ref`, `--model`, `--catalog` |
 | [`lint.py`](pipeline/lint.py) | Health-check the KB: orphans, stale/dangling sources, missing cross-refs; `--deep` adds contradiction detection |
+| [`bootstrap.py`](pipeline/bootstrap.py) | Build a structured wiki from scratch toward the `mkdocs.yml` nav blueprint (`--clean` for a true reset) |
 
 ### Ingesting a document
 
