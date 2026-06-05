@@ -75,3 +75,14 @@ def scaffold_missing(kb_root: Path) -> list:
             encoding="utf-8")
         created.append(rel)
     return created
+
+
+def clean_docs(kb_root: Path) -> int:
+    """Delete all markdown and json under docs/ (keeps directories and mkdocs.yml)."""
+    docs = kb_root / "docs"
+    removed = 0
+    for pattern in ("*.md", "*.json"):
+        for page in docs.rglob(pattern):
+            page.unlink()
+            removed += 1
+    return removed

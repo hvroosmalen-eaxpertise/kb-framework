@@ -65,3 +65,15 @@ def test_parse_nav_and_scaffold(tmp_path: Path):
     stub = (docs / "standards/esrs/index.md").read_text(encoding="utf-8")
     assert "title: ESRS" in stub and "# ESRS" in stub
     assert "[[" not in stub
+
+
+def test_clean_docs_removes_md_and_json(tmp_path: Path):
+    docs = tmp_path / "docs" / "standards" / "esrs"
+    docs.mkdir(parents=True)
+    (tmp_path / "docs" / "index.md").write_text("x", encoding="utf-8")
+    (docs / "index.md").write_text("x", encoding="utf-8")
+    (tmp_path / "docs" / "catalog.json").write_text("[]", encoding="utf-8")
+    removed = bootstrap.clean_docs(tmp_path)
+    assert removed == 3
+    assert list((tmp_path / "docs").rglob("*.md")) == []
+    assert list((tmp_path / "docs").rglob("*.json")) == []
