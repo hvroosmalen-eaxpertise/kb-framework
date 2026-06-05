@@ -4,6 +4,7 @@ from pathlib import Path
 import yaml
 
 import ingest
+import bootstrap
 
 
 def test_domain_index_path_uses_config_map(tmp_path: Path):
@@ -26,3 +27,19 @@ def test_enrich_glossary_seeds_when_absent(tmp_path: Path, monkeypatch):
     ingest.enrich_glossary(paths, tmp_path, "article", "meta", paths["logs"] / "enrich.log")
     g = (docs / "glossary.md").read_text(encoding="utf-8")
     assert "# Glossary" in g and "Double Materiality" in g
+
+
+def test_parse_splitter_output_keeps_known_domains_only():
+    text = (
+        "## DOMAIN: ESRS\nESRS prose here.\n\n"
+        "## DOMAIN: XYZ\nUnknown domain, ignore.\n\n"
+        "## DOMAIN: GRI\nGRI prose here.\n"
+    )
+    blocks = bootstrap.parse_splitter_output(text, ["ESRS", "GRI", "TCFD"])
+    assert set(blocks) == {"ESRS", "GRI"}
+    assert blocks["ESRS"].startswith("ESRS prose")
+    assert "Unknown" not in "".join(blocks.values())
+
+
+def test_parse_splitter_output_empty_when_no_sections():
+    assert bootstrap.parse_splitter_output("nothing here", ["ESRS"]) == {}
