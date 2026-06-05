@@ -203,3 +203,22 @@ def test_bootstrap_one_merges_into_existing_domain_page(tmp_path: Path, monkeypa
     text = page.read_text(encoding="utf-8")
     assert "MERGED ESRS BODY" in text          # body came from merge_into_domain (stubbed)
     assert "src.pdf" in text                    # merge_frontmatter recorded the source
+
+
+def test_reconcile_links_records_unresolved(tmp_path: Path, monkeypatch):
+    (tmp_path / "config").mkdir()
+    (tmp_path / "mkdocs.yml").write_text("site_name: T\n", encoding="utf-8")
+
+    class _Result:
+        stdout = ("WARNING - wikilinks: unresolved [[EFRAG]] in insights/x.md\n"
+                  "WARNING - wikilinks: unresolved [[Science-Based Targets|SBT]] in y.md\n")
+        stderr = ""
+
+    monkeypatch.setattr(bootstrap.subprocess, "run", lambda *a, **k: _Result())
+    recorded = bootstrap.reconcile_links(tmp_path)
+    assert recorded == 2
+    kx = (tmp_path / "config" / "known_external.txt").read_text(encoding="utf-8").lower()
+    assert "efrag" in kx
+    assert "science-based targets" in kx        # the |alias is stripped
+    # Idempotent: a second run records nothing new.
+    assert bootstrap.reconcile_links(tmp_path) == 0
