@@ -101,7 +101,7 @@ pip install anthropic pypdf pyyaml python-dotenv mkdocs mkdocs-material
 1. Create a new KB directory with the structure expected by `ingest.py`:
    ```
    my-kb/
-   ├── config/kb.yaml        # name, framework_path, default_source_body
+   ├── config/kb.yaml        # name, framework_path, default_source_body, domains
    ├── docs/                 # MkDocs content root
    ├── pipeline/inbox/       # drop PDFs here
    ├── pipeline/processed/
@@ -111,7 +111,12 @@ pip install anthropic pypdf pyyaml python-dotenv mkdocs mkdocs-material
    └── .env                  # ANTHROPIC_API_KEY=...
    ```
 2. Set `framework_path: ../kb-framework` in `config/kb.yaml`.
-3. Run `python ../kb-framework/pipeline/ingest.py --kb .` to ingest your first documents.
+3. Declare a `domains:` map in `config/kb.yaml` (domain tag → canonical page path), e.g.
+   `ESRS: standards/esrs/index.md`. Both `ingest.py` (Layer-1 merge) and `bootstrap.py`
+   read it; without it, PDFs are filed only as standalone reports.
+4. Run `python ../kb-framework/pipeline/ingest.py --kb .` to grow the KB one PDF at a time,
+   or `python ../kb-framework/pipeline/bootstrap.py --kb . --clean` to build it from scratch
+   toward the `mkdocs.yml` nav blueprint.
 
 ## Related
 
