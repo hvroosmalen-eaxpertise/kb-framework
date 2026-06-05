@@ -25,3 +25,12 @@ def test_catalog_entry_fields_and_wikilinks(tiny_kb: Path):
     assert esrs["wikilinks"] == ["Double Materiality"]
     climate = next(e for e in data if e["url"] == "insights/climate/")
     assert climate["generated"] is True
+
+
+def test_catalog_md_groups_by_type_and_has_banner(tiny_kb: Path):
+    build_catalog(tiny_kb)
+    md = (tiny_kb / "docs" / "catalog.md").read_text(encoding="utf-8")
+    assert "generated: true" in md           # frontmatter triggers the banner
+    assert "## standard" in md and "## framework" in md
+    assert "[ESRS](standards/esrs/index.md)" in md   # md uses repo-relative path
+    assert "*(generated)*" in md             # the insight page is flagged

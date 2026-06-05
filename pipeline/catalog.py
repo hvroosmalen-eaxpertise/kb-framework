@@ -58,6 +58,31 @@ def collect_entries(kb_root: Path) -> list[dict]:
     return entries
 
 
+def _write_markdown(docs_path: Path, entries: list[dict]) -> None:
+    by_type: dict[str, list[dict]] = {}
+    for e in entries:
+        by_type.setdefault(e["content_type"] or "other", []).append(e)
+
+    lines = []
+    for ctype in sorted(by_type):
+        lines.append(f"## {ctype}\n")
+        for e in by_type[ctype]:
+            dom = f" `{', '.join(e['domain'])}`" if e["domain"] else ""
+            flag = " *(generated)*" if e["generated"] else ""
+            summary = f" - {e['summary']}" if e["summary"] else ""
+            lines.append(f"- [{e['title']}]({e['path']}){dom}{summary}{flag}")
+        lines.append("")
+
+    fm = (
+        "---\ntitle: Catalog\ncontent_type: model\ngenerated: true\n"
+        f"date_updated: {datetime.date.today().isoformat()}\n---\n\n"
+        "# Catalog\n\n"
+        "Every page in this knowledge base, grouped by type. "
+        "Machine-readable version: [catalog.json](catalog.json).\n\n"
+    )
+    (docs_path / "catalog.md").write_text(fm + "\n".join(lines), encoding="utf-8")
+
+
 def build_catalog(kb_root: Path) -> list[dict]:
     docs_path = kb_root / "docs"
     entries = collect_entries(kb_root)
@@ -66,4 +91,6 @@ def build_catalog(kb_root: Path) -> list[dict]:
                    indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
+    _write_markdown(docs_path, entries)
+    print(f"Catalog written: {len(entries)} pages")
     return entries
