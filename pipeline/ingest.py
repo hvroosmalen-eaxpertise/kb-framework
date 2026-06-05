@@ -107,18 +107,6 @@ def determine_output_path(docs_root: Path, frontmatter: dict, source_name: str) 
 
 # ── Domain merge (Layer 1) ──────────────────────────────────────────────────────
 
-DOMAIN_INDEX = {
-    "ESRS": "standards/esrs/index.md",
-    "CSRD": "standards/csrd/index.md",
-    "EU-TAXONOMY": "standards/eu-taxonomy/index.md",
-    "VSME": "standards/vsme/index.md",
-    "GHG": "standards/ghg-protocol/index.md",
-    "GHG-PROTOCOL": "standards/ghg-protocol/index.md",
-    "SDG": "frameworks/un-sdgs/index.md",
-    "GRI": "frameworks/gri/index.md",
-    "TCFD": "frameworks/tcfd/index.md",
-}
-
 MERGEABLE_TYPES = {"standard", "directive", "framework"}
 
 
@@ -130,12 +118,12 @@ def split_frontmatter(text: str):
     return {}, text.strip()
 
 
-def domain_index_path(docs_root: Path, frontmatter: dict):
+def domain_index_path(docs_root: Path, frontmatter: dict, domain_map: dict):
     """The canonical index.md a mergeable article should fold into, or None."""
     if frontmatter.get("content_type") not in MERGEABLE_TYPES:
         return None
     for d in frontmatter.get("domain", []) or []:
-        rel = DOMAIN_INDEX.get(str(d).upper())
+        rel = domain_map.get(str(d).upper())
         if rel:
             return docs_root / rel
     return None
@@ -339,7 +327,8 @@ def ingest_pdf(pdf_path: Path, paths: dict, framework_path: Path, kb_config: dic
         log(enrich_log, "INFO", f"TAGGED {pdf_path.name} → domain={frontmatter.get('domain')}")
 
         # 4. Determine target and assemble content (Layer 1: domain merge)
-        target_index = domain_index_path(paths["docs"], frontmatter)
+        domain_map = {k.upper(): v for k, v in (kb_config.get("domains") or {}).items()}
+        target_index = domain_index_path(paths["docs"], frontmatter, domain_map)
         if target_index is not None and target_index.exists():
             # Mergeable type with an existing canonical page → grow that page.
             existing_fm, existing_body = split_frontmatter(target_index.read_text(encoding="utf-8"))
