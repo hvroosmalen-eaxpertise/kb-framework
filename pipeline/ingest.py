@@ -20,6 +20,8 @@ import anthropic
 import yaml
 from dotenv import load_dotenv
 
+from catalog import build_catalog
+
 # ── Paths ──────────────────────────────────────────────────────────────────────
 
 def resolve_paths(kb_root: Path):
@@ -440,6 +442,7 @@ def main():
         rebuild_script = framework_path / "pipeline" / "rebuild.py"
         if rebuild_script.exists():
             subprocess.run([sys.executable, str(rebuild_script), "--kb", str(kb_root)])
+        build_catalog(kb_root)
 
 if __name__ == "__main__":
     main()
