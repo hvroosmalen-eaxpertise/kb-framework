@@ -77,3 +77,70 @@ def test_clean_docs_removes_md_and_json(tmp_path: Path):
     assert removed == 3
     assert list((tmp_path / "docs").rglob("*.md")) == []
     assert list((tmp_path / "docs").rglob("*.json")) == []
+
+
+# Shared fakes. load_agent_prompt is patched to return the agent NAME, so call_claude
+# can dispatch deterministically by name (robust to agent-prompt wording changes).
+def _fake_prompt(framework_path, agent_name):
+    return agent_name
+
+
+def _fake_claude(system_prompt, user_content, **kw):
+    return {
+        "splitter": "## DOMAIN: ESRS\nESRS prose from the source.\n",
+        "wikipedia-style": "Wikipedia-style article body about ESRS.",
+        "domain-merge": "MERGED ESRS BODY",
+        "tagger": "content_type: report\ntitle: A Report\ndomain: []\n",
+        "term-enricher": "### Double Materiality\nImpact and financial.\n",
+    }.get(system_prompt, "")
+
+
+def _patch_llm(monkeypatch):
+    """Patch call_claude + load_agent_prompt in BOTH modules (ingest helpers call ingest's)."""
+    import ingest
+    monkeypatch.setattr(bootstrap, "call_claude", _fake_claude)
+    monkeypatch.setattr(bootstrap, "load_agent_prompt", _fake_prompt)
+    monkeypatch.setattr(ingest, "call_claude", _fake_claude)
+    monkeypatch.setattr(ingest, "load_agent_prompt", _fake_prompt)
+
+
+def test_bootstrap_one_merges_domain_block(tmp_path: Path, monkeypatch):
+    fw = Path(__file__).resolve().parents[1]            # real kb-framework
+    docs = tmp_path / "docs"; (tmp_path / "logs").mkdir(); (tmp_path / "config").mkdir()
+    (tmp_path / "pipeline" / "processed").mkdir(parents=True); docs.mkdir()
+    pdf = tmp_path / "pipeline" / "inbox" / "src.pdf"
+    pdf.parent.mkdir(parents=True); pdf.write_bytes(b"%PDF-1.4 fake")
+    paths = bootstrap.resolve_paths(tmp_path)
+
+    monkeypatch.setattr(bootstrap, "extract_markdown", lambda p: "raw text")
+    _patch_llm(monkeypatch)
+    domain_map = {"ESRS": "standards/esrs/index.md"}
+    merged = bootstrap._bootstrap_one(
+        pdf, paths, fw, {"domains": domain_map},
+        domain_map=domain_map, nav_paths={"standards/esrs/index.md"},
+        label_by_path={"standards/esrs/index.md": "ESRS"})
+
+    page = docs / "standards/esrs/index.md"
+    assert page.exists()
+    assert "content_type: standard" in page.read_text(encoding="utf-8")
+    assert merged is True
+    assert (tmp_path / "pipeline" / "processed" / "src.pdf").exists()  # moved
+
+
+def test_bootstrap_one_report_fallback(tmp_path: Path, monkeypatch):
+    fw = Path(__file__).resolve().parents[1]
+    docs = tmp_path / "docs"; (tmp_path / "logs").mkdir(); (tmp_path / "config").mkdir()
+    (tmp_path / "pipeline" / "processed").mkdir(parents=True); docs.mkdir()
+    pdf = tmp_path / "pipeline" / "inbox" / "rep.pdf"
+    pdf.parent.mkdir(parents=True); pdf.write_bytes(b"%PDF-1.4 fake")
+    (tmp_path / "mkdocs.yml").write_text("site_name: T\nnav: []\n", encoding="utf-8")
+    paths = bootstrap.resolve_paths(tmp_path)
+
+    monkeypatch.setattr(bootstrap, "extract_markdown", lambda p: "raw")
+    _patch_llm(monkeypatch)
+    # Empty domain_map => splitter blocks are all filtered out => report fallback.
+    merged = bootstrap._bootstrap_one(
+        pdf, paths, fw, {"domains": {}},
+        domain_map={}, nav_paths=set(), label_by_path={})
+    assert merged is False
+    assert list((docs / "reports").rglob("*.md"))  # a report page was written
