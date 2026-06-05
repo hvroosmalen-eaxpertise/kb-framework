@@ -16,6 +16,7 @@ import subprocess
 from pathlib import Path
 
 import yaml
+from dotenv import load_dotenv
 
 from ingest import (
     resolve_paths, log, extract_markdown, load_agent_prompt, call_claude,
@@ -228,6 +229,7 @@ def main():
                         help="Delete docs/**/*.md and *.json before building (true from-scratch)")
     args = parser.parse_args()
     kb_root = Path(args.kb).resolve()
+    load_dotenv(kb_root / ".env")  # so ANTHROPIC_API_KEY is available to call_claude
     cfg_file = kb_root / "config" / "kb.yaml"
     kb_config = yaml.safe_load(cfg_file.read_text(encoding="utf-8")) if cfg_file.exists() else {}
     fw_raw = (kb_config or {}).get("framework_path", "../kb-framework")
