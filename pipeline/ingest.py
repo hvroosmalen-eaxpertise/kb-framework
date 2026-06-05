@@ -20,8 +20,6 @@ import anthropic
 import yaml
 from dotenv import load_dotenv
 
-from catalog import build_catalog
-
 # ── Paths ──────────────────────────────────────────────────────────────────────
 
 def resolve_paths(kb_root: Path):
@@ -437,12 +435,11 @@ def main():
         query_script = framework_path / "pipeline" / "query.py"
         if query_script.exists():
             subprocess.run([sys.executable, str(query_script), "--kb", str(kb_root),
-                            "--cross-ref", "--synthesis"])
+                            "--cross-ref", "--synthesis", "--catalog"])
         # Build and commit locally (no auto-push — the merged/synthesised diffs get reviewed)
         rebuild_script = framework_path / "pipeline" / "rebuild.py"
         if rebuild_script.exists():
             subprocess.run([sys.executable, str(rebuild_script), "--kb", str(kb_root)])
-        build_catalog(kb_root)
 
 if __name__ == "__main__":
     main()
