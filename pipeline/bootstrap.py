@@ -168,3 +168,68 @@ def _bootstrap_one(pdf, paths, framework_path, kb_config,
                       out_path=(paths["docs"] / "glossary.md"), docs_root=paths["docs"],
                       frontmatter={"title": pdf.stem, "domain": list(blocks)})
     return merged_any
+
+
+def _regenerate(kb_root: Path, framework_path: Path) -> None:
+    """Regenerate models (3), cross-ref, synthesis, catalog via query.py subprocesses."""
+    query = framework_path / "pipeline" / "query.py"
+    for model in ("semantic-model", "concept-map", "ontology"):
+        subprocess.run([sys.executable, str(query), "--kb", str(kb_root), "--model", model])
+    subprocess.run([sys.executable, str(query), "--kb", str(kb_root),
+                    "--cross-ref", "--synthesis", "--catalog"])
+
+
+def _rebuild(kb_root: Path, framework_path: Path) -> None:
+    rebuild = framework_path / "pipeline" / "rebuild.py"
+    if rebuild.exists():
+        subprocess.run([sys.executable, str(rebuild), "--kb", str(kb_root)])
+
+
+def run_bootstrap(kb_root: Path, framework_path: Path, kb_config: dict, clean: bool = False):
+    paths = resolve_paths(kb_root)
+    ingest_log = paths["logs"] / "ingestion.log"
+    paths["logs"].mkdir(parents=True, exist_ok=True)
+    if clean:
+        removed = clean_docs(kb_root)
+        log(ingest_log, "INFO", f"BOOTSTRAP_CLEAN removed {removed} files")
+
+    nav_pairs = parse_nav(kb_root / "mkdocs.yml")
+    nav_paths = {rel for _, rel in nav_pairs}
+    label_by_path = {rel: label for label, rel in nav_pairs}
+    domain_map = {k.upper(): v for k, v in (kb_config.get("domains") or {}).items()}
+
+    pdfs = sorted(paths["inbox"].glob("*.pdf"))
+    for pdf in pdfs:
+        try:
+            _bootstrap_one(pdf, paths, framework_path, kb_config,
+                           domain_map, nav_paths, label_by_path)
+        except Exception as exc:
+            log(ingest_log, "ERROR", f"BOOTSTRAP_FAILED {pdf.name}: {exc}")
+            try:
+                shutil.move(str(pdf), str(paths["failed"] / pdf.name))
+            except Exception:
+                pass
+
+    _regenerate(kb_root, framework_path)
+    created = scaffold_missing(kb_root)
+    if created:
+        log(ingest_log, "INFO", f"BOOTSTRAP_SCAFFOLD {len(created)} stub pages")
+    _rebuild(kb_root, framework_path)
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--kb", required=True)
+    parser.add_argument("--clean", action="store_true",
+                        help="Delete docs/**/*.md and *.json before building (true from-scratch)")
+    args = parser.parse_args()
+    kb_root = Path(args.kb).resolve()
+    cfg_file = kb_root / "config" / "kb.yaml"
+    kb_config = yaml.safe_load(cfg_file.read_text(encoding="utf-8")) if cfg_file.exists() else {}
+    fw_raw = (kb_config or {}).get("framework_path", "../kb-framework")
+    framework_path = (kb_root / fw_raw).resolve()
+    run_bootstrap(kb_root, framework_path, kb_config or {}, clean=args.clean)
+
+
+if __name__ == "__main__":
+    main()

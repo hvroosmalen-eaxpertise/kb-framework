@@ -144,3 +144,35 @@ def test_bootstrap_one_report_fallback(tmp_path: Path, monkeypatch):
         domain_map={}, nav_paths=set(), label_by_path={})
     assert merged is False
     assert list((docs / "reports").rglob("*.md"))  # a report page was written
+
+
+def test_run_bootstrap_end_to_end_strict_build(tmp_path: Path, monkeypatch):
+    fw = Path(__file__).resolve().parents[1]
+    (tmp_path / "config").mkdir(); (tmp_path / "logs").mkdir(); (tmp_path / "docs").mkdir()
+    for sub in ("inbox", "processed", "failed"):
+        (tmp_path / "pipeline" / sub).mkdir(parents=True)
+    (tmp_path / "pipeline" / "inbox" / "src.pdf").write_bytes(b"%PDF-1.4 fake")
+    (tmp_path / "config" / "kb.yaml").write_text(
+        "name: t\nframework_path: " + fw.as_posix() + "\n"
+        "domains:\n  ESRS: standards/esrs/index.md\n", encoding="utf-8")
+    (tmp_path / "mkdocs.yml").write_text(
+        "site_name: T\ndocs_dir: docs\nsite_dir: site\nplugins: [search]\nnav:\n"
+        "  - Home: index.md\n  - ESRS: standards/esrs/index.md\n  - Glossary: glossary.md\n",
+        encoding="utf-8")
+
+    monkeypatch.setattr(bootstrap, "extract_markdown", lambda p: "raw text")
+    _patch_llm(monkeypatch)
+    monkeypatch.setattr(bootstrap, "_regenerate", lambda *a, **k: None)
+    monkeypatch.setattr(bootstrap, "_rebuild", lambda *a, **k: None)
+
+    kb_cfg = yaml.safe_load((tmp_path / "config" / "kb.yaml").read_text(encoding="utf-8"))
+    bootstrap.run_bootstrap(tmp_path, fw, kb_cfg, clean=True)
+
+    assert (tmp_path / "docs" / "standards/esrs/index.md").exists()
+    assert (tmp_path / "docs" / "index.md").exists()           # scaffolded stub
+    assert (tmp_path / "docs" / "glossary.md").exists()         # seeded by enrich_glossary
+    import subprocess, sys
+    r = subprocess.run([sys.executable, "-m", "mkdocs", "build",
+                        "--config-file", str(tmp_path / "mkdocs.yml"), "--strict"],
+                       capture_output=True, text=True, cwd=str(tmp_path))
+    assert r.returncode == 0, r.stdout + r.stderr
