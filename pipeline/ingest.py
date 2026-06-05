@@ -440,6 +440,11 @@ def main():
         rebuild_script = framework_path / "pipeline" / "rebuild.py"
         if rebuild_script.exists():
             subprocess.run([sys.executable, str(rebuild_script), "--kb", str(kb_root)])
+        try:
+            from lint import run_deterministic
+            run_deterministic(kb_root, kb_config or {})
+        except Exception as exc:
+            print(f"lint: skipped ({exc})")
 
 if __name__ == "__main__":
     main()
