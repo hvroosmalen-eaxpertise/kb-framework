@@ -190,7 +190,8 @@ def upsert_glossary(glossary_text: str, new_entries_md: str) -> str:
 def enrich_glossary(paths: dict, framework_path: Path, article_md: str, source_meta: str, enrich_log: Path):
     glossary = paths["docs"] / "glossary.md"
     if not glossary.exists():
-        return
+        glossary.parent.mkdir(parents=True, exist_ok=True)
+        glossary.write_text("---\ntitle: Glossary\n---\n\n# Glossary\n\n", encoding="utf-8")
     prompt = load_agent_prompt(framework_path, "term-enricher")
     entries = call_claude(prompt, f"{source_meta}\n\n---\n\n{article_md[:8000]}")
     if "###" not in entries:
