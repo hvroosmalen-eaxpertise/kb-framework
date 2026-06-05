@@ -176,3 +176,30 @@ def test_run_bootstrap_end_to_end_strict_build(tmp_path: Path, monkeypatch):
                         "--config-file", str(tmp_path / "mkdocs.yml"), "--strict"],
                        capture_output=True, text=True, cwd=str(tmp_path))
     assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_bootstrap_one_merges_into_existing_domain_page(tmp_path: Path, monkeypatch):
+    fw = Path(__file__).resolve().parents[1]
+    docs = tmp_path / "docs"; (tmp_path / "logs").mkdir(); (tmp_path / "config").mkdir()
+    (tmp_path / "pipeline" / "processed").mkdir(parents=True); docs.mkdir()
+    # Pre-existing curated ESRS page -> exercises the merge_into_domain branch.
+    page = docs / "standards/esrs/index.md"
+    page.parent.mkdir(parents=True)
+    page.write_text("---\ntitle: ESRS\ncontent_type: standard\ndomain: [ESRS]\n---\n\n"
+                    "# ESRS\n\nCurated prose.\n", encoding="utf-8")
+    pdf = tmp_path / "pipeline" / "inbox" / "src.pdf"
+    pdf.parent.mkdir(parents=True); pdf.write_bytes(b"%PDF-1.4 fake")
+    paths = bootstrap.resolve_paths(tmp_path)
+
+    monkeypatch.setattr(bootstrap, "extract_markdown", lambda p: "raw text")
+    _patch_llm(monkeypatch)
+    domain_map = {"ESRS": "standards/esrs/index.md"}
+    merged = bootstrap._bootstrap_one(
+        pdf, paths, fw, {"domains": domain_map},
+        domain_map=domain_map, nav_paths={"standards/esrs/index.md"},
+        label_by_path={"standards/esrs/index.md": "ESRS"})
+
+    assert merged is True
+    text = page.read_text(encoding="utf-8")
+    assert "MERGED ESRS BODY" in text          # body came from merge_into_domain (stubbed)
+    assert "src.pdf" in text                    # merge_frontmatter recorded the source

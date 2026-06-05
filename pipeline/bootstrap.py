@@ -121,6 +121,7 @@ def _bootstrap_one(pdf, paths, framework_path, kb_config,
     blocks = parse_splitter_output(split, domain_map.keys())
 
     merged_any = False
+    written = []  # (out_path, frontmatter) per page actually written, for the changelog
     for tag, prose in blocks.items():
         rel = domain_map[tag]
         if rel not in nav_paths:
@@ -136,6 +137,7 @@ def _bootstrap_one(pdf, paths, framework_path, kb_config,
             fm = _new_domain_frontmatter(rel, tag, label_by_path.get(rel, tag), pdf.name)
         _write(target, fm, body)
         log(ingest_log, "INFO", f"BOOTSTRAP_MERGED {pdf.name} -> {rel}")
+        written.append((target, fm))
         merged_any = True
 
     if not merged_any:
@@ -152,6 +154,7 @@ def _bootstrap_one(pdf, paths, framework_path, kb_config,
         source_name = pdf.stem.lower().replace(" ", "-")
         out_path = determine_output_path(paths["docs"], frontmatter, source_name)
         _write(out_path, frontmatter, article)
+        written.append((out_path, frontmatter))
         mkdocs_yml = paths["docs"].parent / "mkdocs.yml"
         if mkdocs_yml.exists():
             _update_nav(mkdocs_yml, out_path, paths["docs"],
@@ -164,9 +167,10 @@ def _bootstrap_one(pdf, paths, framework_path, kb_config,
         log(enrich_log, "WARN", f"GLOSSARY_SKIP {pdf.name}: {exc}")
 
     shutil.move(str(pdf), str(paths["processed"] / pdf.name))
-    _append_changelog(changelog=paths["logs"].parent / "CHANGELOG.md", pdf_name=pdf.name,
-                      out_path=(paths["docs"] / "glossary.md"), docs_root=paths["docs"],
-                      frontmatter={"title": pdf.stem, "domain": list(blocks)})
+    changelog = paths["logs"].parent / "CHANGELOG.md"
+    for out_path, fm in written:
+        _append_changelog(changelog=changelog, pdf_name=pdf.name, out_path=out_path,
+                          docs_root=paths["docs"], frontmatter=fm)
     return merged_any
 
 
