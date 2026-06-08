@@ -60,6 +60,7 @@ See [`schemas/README.md`](schemas/README.md) for the schema overview (the three 
 | [`query.py`](pipeline/query.py) | Regenerate derived artefacts: `--synthesis`, `--cross-ref`, `--model`, `--catalog` |
 | [`lint.py`](pipeline/lint.py) | Health-check the KB: orphans, stale/dangling sources, missing cross-refs; `--deep` adds contradiction detection |
 | [`bootstrap.py`](pipeline/bootstrap.py) | Build a structured wiki from scratch toward the `mkdocs.yml` nav blueprint (`--clean` for a true reset) |
+| [`usage.py`](pipeline/usage.py) | Token-usage accounting for every Claude call; tally a run with `--kb <path>` |
 
 ### Ingesting a document
 
@@ -76,7 +77,7 @@ On success the pipeline:
 3. Calls Claude to generate YAML frontmatter (title, domain, tags)
 4. Writes the enriched Markdown to `docs/` in the knowledge base
 5. Merges new facts into the canonical domain `index.md` (not a parallel page)
-6. Upserts extracted terms into `glossary.md`
+6. Upserts extracted terms into `glossary.md`, kept in alphabetical order (case-insensitive)
 7. Regenerates synthesis pages, the cross-reference matrix, and the catalog
 8. Runs a warn-only deterministic lint, then commits locally (no push)
 9. Moves the PDF to `pipeline/processed/`
@@ -88,6 +89,19 @@ Failed PDFs move to `pipeline/failed/` with a log entry in `logs/ingestion.log`.
 ```bash
 python pipeline/rebuild.py --kb <path-to-kb>          # build + git commit + push
 python pipeline/rebuild.py --kb <path-to-kb> --no-git  # build only
+```
+
+### Token-usage accounting
+
+Every Claude call (`ingest.py`, `query.py`, `bootstrap.py`) records its token usage to
+`<kb>/logs/token_usage.jsonl` — one JSON line per call, labelled by stage
+(`wikipedia-style`, `splitter`, `domain-merge`, `tagger`, `glossary`, `model:*`,
+`synthesis`). Accounting spans subprocesses (`bootstrap.py` spawns `query.py`), so a full
+`--clean` run yields one exact, per-stage tally. `bootstrap.py` prints it on completion;
+read any log on demand with:
+
+```bash
+python pipeline/usage.py --kb <path-to-kb>
 ```
 
 ## Requirements

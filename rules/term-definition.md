@@ -33,6 +33,14 @@ A definition is good when it satisfies all of the following:
 5. **Single sense** — If a term has multiple meanings in different contexts, create a separate entry per context with a qualifier: *Materiality (ESRS)* vs *Materiality (accounting)*.
 6. **Concise** — One to three sentences maximum for the definition field.
 
+## Glossary Ordering
+
+Terms on the glossary page are always displayed in **alphabetical order**, sorted by
+term name case-insensitively — independent of the order in which sources contributed
+them. `upsert_glossary` (in `pipeline/ingest.py`) re-sorts the full term list on every
+write, so the ordering is self-healing: any existing glossary is reordered the next time
+a term is upserted. Do not hand-order entries; insertion order is not preserved.
+
 ## Enrichment Steps
 
 When processing a term from a source document:

@@ -18,6 +18,7 @@ from pathlib import Path
 import yaml
 from dotenv import load_dotenv
 
+import usage
 from ingest import (
     resolve_paths, log, extract_markdown, load_agent_prompt, call_claude,
     split_frontmatter, merge_into_domain, merge_frontmatter, determine_output_path,
@@ -115,10 +116,11 @@ def _bootstrap_one(pdf, paths, framework_path, kb_config,
                    f"Source body: {kb_config.get('default_source_body', 'Unknown')}\n"
                    f"Date: {datetime.date.today().isoformat()}")
     article = call_claude(load_agent_prompt(framework_path, "wikipedia-style"),
-                          f"{source_meta}\n\n---\n\n{raw[:12000]}")
+                          f"{source_meta}\n\n---\n\n{raw[:12000]}", label="wikipedia-style")
 
     split = call_claude(load_agent_prompt(framework_path, "splitter"),
-                        f"KNOWN DOMAINS: {', '.join(domain_map) or '(none)'}\n\n---\n\n{article[:12000]}")
+                        f"KNOWN DOMAINS: {', '.join(domain_map) or '(none)'}\n\n---\n\n{article[:12000]}",
+                        label="splitter")
     blocks = parse_splitter_output(split, domain_map.keys())
 
     merged_any = False
@@ -144,7 +146,8 @@ def _bootstrap_one(pdf, paths, framework_path, kb_config,
     if not merged_any:
         # Standalone report: tag, then write to determine_output_path.
         tag_yaml = call_claude(load_agent_prompt(framework_path, "tagger"),
-                               f"{source_meta}\n\n---\n\n{article[:6000]}").strip().lstrip("-").strip()
+                               f"{source_meta}\n\n---\n\n{article[:6000]}",
+                               label="tagger").strip().lstrip("-").strip()
         try:
             frontmatter = yaml.safe_load(tag_yaml) or {}
         except yaml.YAMLError:
@@ -230,6 +233,8 @@ def run_bootstrap(kb_root: Path, framework_path: Path, kb_config: dict, clean: b
     paths = resolve_paths(kb_root)
     ingest_log = paths["logs"] / "ingestion.log"
     paths["logs"].mkdir(parents=True, exist_ok=True)
+    usage.configure(paths["logs"])  # also sets KB_LOGS_DIR for query.py subprocesses
+    usage.reset()                   # fresh tally for this from-scratch run
     if clean:
         removed = clean_docs(kb_root)
         log(ingest_log, "INFO", f"BOOTSTRAP_CLEAN removed {removed} files")
@@ -259,6 +264,9 @@ def run_bootstrap(kb_root: Path, framework_path: Path, kb_config: dict, clean: b
     if recorded:
         log(ingest_log, "INFO", f"BOOTSTRAP_RECONCILE {recorded} external links recorded")
     _rebuild(kb_root, framework_path)
+
+    # Full cross-process tally (parent + query.py subprocesses share token_usage.jsonl).
+    print(usage.format_tally(usage.tally(paths["logs"])))
 
 
 def main():

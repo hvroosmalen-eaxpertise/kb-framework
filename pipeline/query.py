@@ -17,6 +17,8 @@ from pathlib import Path
 import anthropic
 import yaml
 
+import usage
+
 
 def slugify(text: str) -> str:
     text = re.sub(r"[^\w\s-]", "", text).strip().lower()
@@ -52,7 +54,8 @@ def load_agent_prompt(framework_path: Path, agent_name: str) -> str:
     return match.group(1).strip() if match else text
 
 
-def call_claude(system_prompt: str, user_content: str, model="claude-sonnet-4-6") -> str:
+def call_claude(system_prompt: str, user_content: str, model="claude-sonnet-4-6",
+                label: str = "") -> str:
     client = anthropic.Anthropic()
     message = client.messages.create(
         model=model,
@@ -60,6 +63,7 @@ def call_claude(system_prompt: str, user_content: str, model="claude-sonnet-4-6"
         system=system_prompt,
         messages=[{"role": "user", "content": user_content}]
     )
+    usage.record(model, message.usage, label)
     return message.content[0].text
 
 
@@ -100,7 +104,7 @@ def build_model(kb_root: Path, framework_path: Path, model_type: str):
         f"Article content:\n{combined}"
     )
 
-    result = call_claude(prompt, user_input)
+    result = call_claude(prompt, user_input, label=f"model:{model_type}")
 
     out_path = kb_root / "docs" / "models" / f"{model_type}.md"
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -192,7 +196,7 @@ def build_synthesis(kb_root: Path, framework_path: Path, only_domains: set[str] 
             f"=== SOURCE ARTICLES ===\n\n" + "\n\n---\n\n".join(source_blocks) +
             f"\n\n=== GLOSSARY ===\n\n{glossary_text[:6000]}"
         )
-        body = call_claude(prompt, user_input)
+        body = call_claude(prompt, user_input, label="synthesis")
 
         slug = slugify(title)
         out_path = docs_path / "insights" / f"{slug}.md"
@@ -251,6 +255,7 @@ def main():
     args = parser.parse_args()
 
     kb_root = Path(args.kb).resolve()
+    usage.configure(kb_root / "logs")
     config  = kb_root / "config" / "kb.yaml"
     kb_cfg  = yaml.safe_load(config.read_text()) if config.exists() else {}
     fw_raw  = kb_cfg.get("framework_path", "framework")

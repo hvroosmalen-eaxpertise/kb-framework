@@ -20,6 +20,8 @@ import anthropic
 import yaml
 from dotenv import load_dotenv
 
+import usage
+
 # ── Paths ──────────────────────────────────────────────────────────────────────
 
 def resolve_paths(kb_root: Path):
@@ -77,7 +79,8 @@ def load_agent_prompt(framework_path: Path, agent_name: str) -> str:
     match = re.search(r"```\n(.*?)```", text, re.DOTALL)
     return match.group(1).strip() if match else text
 
-def call_claude(system_prompt: str, user_content: str, model="claude-sonnet-4-6") -> str:
+def call_claude(system_prompt: str, user_content: str, model="claude-sonnet-4-6",
+                label: str = "") -> str:
     client = anthropic.Anthropic()
     message = client.messages.create(
         model=model,
@@ -85,6 +88,7 @@ def call_claude(system_prompt: str, user_content: str, model="claude-sonnet-4-6"
         system=system_prompt,
         messages=[{"role": "user", "content": user_content}]
     )
+    usage.record(model, message.usage, label)
     return message.content[0].text
 
 def determine_output_path(docs_root: Path, frontmatter: dict, source_name: str) -> Path:
@@ -135,7 +139,7 @@ def merge_into_domain(framework_path: Path, existing_body: str, new_body: str, s
         f"{source_meta}\n\n=== EXISTING ARTICLE ===\n\n{existing_body}\n\n"
         f"=== NEW MATERIAL ===\n\n{new_body[:8000]}"
     )
-    return call_claude(prompt, user_input)
+    return call_claude(prompt, user_input, label="domain-merge")
 
 
 def merge_frontmatter(existing_fm: dict, new_fm: dict, source_file: str) -> dict:
@@ -182,6 +186,9 @@ def upsert_glossary(glossary_text: str, new_entries_md: str) -> str:
         else:
             index[key] = len(entries)
             entries.append((term, block))
+    # Glossary terms always render alphabetically (case-insensitive), regardless of
+    # the order sources contributed them.
+    entries.sort(key=lambda e: e[0].lower())
     body = "".join(_norm_block(b) for _, b in entries)
     pre = re.sub(r"\n+---\s*$", "", preamble.rstrip()).rstrip()
     return pre + "\n\n---\n\n" + body
@@ -193,7 +200,7 @@ def enrich_glossary(paths: dict, framework_path: Path, article_md: str, source_m
         glossary.parent.mkdir(parents=True, exist_ok=True)
         glossary.write_text("---\ntitle: Glossary\n---\n\n# Glossary\n\n", encoding="utf-8")
     prompt = load_agent_prompt(framework_path, "term-enricher")
-    entries = call_claude(prompt, f"{source_meta}\n\n---\n\n{article_md[:8000]}")
+    entries = call_claude(prompt, f"{source_meta}\n\n---\n\n{article_md[:8000]}", label="glossary")
     if "###" not in entries:
         return
     merged = upsert_glossary(glossary.read_text(encoding="utf-8"), entries)
@@ -311,12 +318,12 @@ def ingest_pdf(pdf_path: Path, paths: dict, framework_path: Path, kb_config: dic
 
         # 2. Rewrite to Wikipedia style
         wiki_prompt = load_agent_prompt(framework_path, "wikipedia-style")
-        article_md  = call_claude(wiki_prompt, user_input)
+        article_md  = call_claude(wiki_prompt, user_input, label="wikipedia-style")
         log(enrich_log, "INFO", f"STYLE_APPLIED {pdf_path.name}")
 
         # 3. Generate frontmatter
         tag_prompt    = load_agent_prompt(framework_path, "tagger")
-        frontmatter_yaml = call_claude(tag_prompt, f"{source_meta}\n\n---\n\n{article_md[:6000]}")
+        frontmatter_yaml = call_claude(tag_prompt, f"{source_meta}\n\n---\n\n{article_md[:6000]}", label="tagger")
         frontmatter_yaml = frontmatter_yaml.strip().lstrip("---").strip()
         try:
             frontmatter = yaml.safe_load(frontmatter_yaml)
@@ -402,6 +409,7 @@ def main():
     kb_root      = Path(args.kb).resolve()
     load_dotenv(kb_root / ".env")
     paths        = resolve_paths(kb_root)
+    usage.configure(paths["logs"])
     config_file  = paths["config"]
     kb_config    = yaml.safe_load(config_file.read_text()) if config_file.exists() else {}
     fw_raw = kb_config.get("framework_path", "framework")
