@@ -126,11 +126,11 @@ def build_cross_ref(kb_root: Path):
         fm = a["frontmatter"]
         if not fm:
             continue
-        title   = fm.get("title", str(a["rel_path"]))
+        title   = fm.get("title", a["rel_path"].as_posix())
         domains = ", ".join(fm.get("domain", []))
         sdgs    = ", ".join(fm.get("sdg", []))
         topics  = ", ".join(fm.get("topics", [])[:4])
-        rows.append(f"| [{title}]({a['rel_path']}) | {domains} | {sdgs} | {topics} |")
+        rows.append(f"| [{title}]({a['rel_path'].as_posix()}) | {domains} | {sdgs} | {topics} |")
 
     header = (
         "---\ntitle: Cross-Reference Matrix\ncontent_type: model\ngenerated: true\n"
