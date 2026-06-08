@@ -145,10 +145,12 @@ def merge_into_domain(framework_path: Path, existing_body: str, new_body: str, s
 def merge_frontmatter(existing_fm: dict, new_fm: dict, source_file: str) -> dict:
     fm = dict(existing_fm)
     fm["date_updated"] = datetime.date.today().isoformat()
-    sources = fm.get("sources") or []
-    if source_file not in sources:
-        sources.append(source_file)
-    fm["sources"] = sources
+    # Provenance (which PDFs fed this page) lives in `source_files`, NOT `sources` —
+    # `sources` is reserved for domain-slug references that lint/synthesis resolve.
+    files = fm.get("source_files") or []
+    if source_file not in files:
+        files.append(source_file)
+    fm["source_files"] = files
     topics = list(dict.fromkeys((fm.get("topics") or []) + (new_fm.get("topics") or [])))
     if topics:
         fm["topics"] = topics

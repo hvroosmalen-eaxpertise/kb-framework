@@ -41,6 +41,10 @@ def check_dangling_sources(articles: list[dict]) -> list[Finding]:
     for a in articles:
         rel = a["rel_path"].as_posix()
         for slug in (a["frontmatter"] or {}).get("sources", []) or []:
+            # `sources` holds domain-slug references; file-provenance entries (e.g.
+            # "Report.pdf") belong in `source_files` and are not domain refs — skip them.
+            if str(slug).lower().endswith(".pdf"):
+                continue
             if not _domain_slug_exists(docs_path, slug):
                 findings.append(("STALE", rel, f"source '{slug}' not found"))
     return findings

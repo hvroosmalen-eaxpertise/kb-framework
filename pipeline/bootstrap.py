@@ -96,7 +96,7 @@ def _new_domain_frontmatter(rel: str, tag: str, label: str, pdf_name: str) -> di
     return {
         "title": label or tag, "content_type": ctype, "domain": [tag],
         "status": "draft", "date_added": today, "date_updated": today,
-        "source_file": pdf_name, "sources": [pdf_name],
+        "source_file": pdf_name, "source_files": [pdf_name],
     }
 
 
