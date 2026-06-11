@@ -61,6 +61,7 @@ See [`schemas/README.md`](schemas/README.md) for the schema overview (the three 
 | [`lint.py`](pipeline/lint.py) | Health-check the KB: orphans, stale/dangling sources, missing cross-refs; `--deep` adds contradiction detection |
 | [`bootstrap.py`](pipeline/bootstrap.py) | Build a structured wiki from scratch toward the `mkdocs.yml` nav blueprint (`--clean` for a true reset) |
 | [`usage.py`](pipeline/usage.py) | Token-usage accounting for every Claude call; tally a run with `--kb <path>` |
+| [`sln_sync.py`](pipeline/sln_sync.py) | Mirror `docs/` into a Visual Studio solution's folders; idempotent, opt-in (no-op without a `.sln`). Runs at the end of `ingest.py` and standalone via `--kb <path>` |
 
 ### Ingesting a document
 

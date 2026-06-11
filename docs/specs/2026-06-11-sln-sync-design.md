@@ -1,6 +1,6 @@
 # Design: Visual Studio solution sync
 
-- **Status:** approved, pending implementation
+- **Status:** implemented (`pipeline/sln_sync.py`, `tests/test_sln_sync.py`, wired into `ingest.py`)
 - **Date:** 2026-06-11
 - **Scope:** new `kb-framework/pipeline/sln_sync.py`; one wiring line in `ingest.py`
 - **Tracks:** EurSuRA-kb — keep `EurSuRA-kb.sln` in step with `docs/` as sources are ingested

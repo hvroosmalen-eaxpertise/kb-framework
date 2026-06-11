@@ -525,6 +525,14 @@ def main():
             run_deterministic(kb_root, kb_config or {})
         except Exception as exc:
             print(f"lint: skipped ({exc})")
+        # Mirror the new docs/ pages into the VS solution (no-op without a .sln).
+        # Left uncommitted (rebuild stages only docs/ + logs/) for the same review gate.
+        try:
+            from sln_sync import sync_solution
+            if sync_solution(kb_root):
+                print("solution synced")
+        except Exception as exc:
+            print(f"sln sync: skipped ({exc})")
 
 if __name__ == "__main__":
     main()
