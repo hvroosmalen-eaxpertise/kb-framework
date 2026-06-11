@@ -14,7 +14,7 @@ kb-framework/
 
 ## Agents
 
-Each agent is a markdown file containing a system prompt used by `pipeline/ingest.py` during PDF ingestion.
+Each agent is a markdown file containing a system prompt used by `pipeline/ingest.py` during ingestion.
 
 | Agent | Purpose |
 |---|---|
@@ -55,7 +55,7 @@ See [`schemas/README.md`](schemas/README.md) for the schema overview (the three 
 
 | Script | Usage |
 |---|---|
-| [`ingest.py`](pipeline/ingest.py) | Process PDFs from `pipeline/inbox/` → enriched Markdown in `docs/` |
+| [`ingest.py`](pipeline/ingest.py) | Process sources (`.pdf` or `.md`) from `pipeline/inbox/` → enriched Markdown in `docs/` |
 | [`rebuild.py`](pipeline/rebuild.py) | Run `mkdocs build` and optionally commit + push the result |
 | [`query.py`](pipeline/query.py) | Regenerate derived artefacts: `--synthesis`, `--cross-ref`, `--model`, `--catalog` |
 | [`lint.py`](pipeline/lint.py) | Health-check the KB: orphans, stale/dangling sources, missing cross-refs; `--deep` adds contradiction detection |
@@ -65,24 +65,30 @@ See [`schemas/README.md`](schemas/README.md) for the schema overview (the three 
 ### Ingesting a document
 
 ```bash
-python pipeline/ingest.py --kb <path-to-kb>          # all PDFs in inbox/
-python pipeline/ingest.py --kb <path-to-kb> --file <pdf>  # one file
+python pipeline/ingest.py --kb <path-to-kb>             # all .pdf/.md in inbox/
+python pipeline/ingest.py --kb <path-to-kb> --file <source>  # one .pdf or .md
 ```
 
 Requires `ANTHROPIC_API_KEY` in the KB root `.env` file.
 
+Sources can be PDFs or Markdown. **Markdown with its own leading frontmatter is
+treated as authored content**: the body is preserved verbatim (no Wikipedia-style
+rewrite) and the tagger only fills missing required fields (`content_type`,
+`domain`, `status`) — the author wins on every conflict. PDFs, and Markdown
+*without* frontmatter, are treated as raw and go through the full rewrite + tag path.
+
 On success the pipeline:
-1. Extracts text from the PDF (`marker-pdf` if available, else `pypdf`)
-2. Calls Claude to rewrite the content in Wikipedia style
-3. Calls Claude to generate YAML frontmatter (title, domain, tags)
+1. Extracts content (PDF → `marker-pdf`/`pypdf`; MD → read verbatim)
+2. For raw sources, calls Claude to rewrite the content in Wikipedia style
+3. Generates YAML frontmatter via Claude (raw), or fills gaps in authored frontmatter
 4. Writes the enriched Markdown to `docs/` in the knowledge base
 5. Merges new facts into the canonical domain `index.md` (not a parallel page)
 6. Upserts extracted terms into `glossary.md`, kept in alphabetical order (case-insensitive)
 7. Regenerates synthesis pages, the cross-reference matrix, and the catalog
 8. Runs a warn-only deterministic lint, then commits locally (no push)
-9. Moves the PDF to `pipeline/processed/`
+9. Moves the source to `pipeline/processed/`
 
-Failed PDFs move to `pipeline/failed/` with a log entry in `logs/ingestion.log`.
+Failed sources move to `pipeline/failed/` with a log entry in `logs/ingestion.log`.
 
 ### Rebuilding the site
 
@@ -117,7 +123,7 @@ pip install anthropic pypdf pyyaml python-dotenv mkdocs mkdocs-material
    my-kb/
    ├── config/kb.yaml        # name, framework_path, default_source_body, domains
    ├── docs/                 # MkDocs content root
-   ├── pipeline/inbox/       # drop PDFs here
+   ├── pipeline/inbox/       # drop .pdf or .md sources here
    ├── pipeline/processed/
    ├── pipeline/failed/
    ├── logs/
@@ -127,8 +133,8 @@ pip install anthropic pypdf pyyaml python-dotenv mkdocs mkdocs-material
 2. Set `framework_path: ../kb-framework` in `config/kb.yaml`.
 3. Declare a `domains:` map in `config/kb.yaml` (domain tag → canonical page path), e.g.
    `ESRS: standards/esrs/index.md`. Both `ingest.py` (Layer-1 merge) and `bootstrap.py`
-   read it; without it, PDFs are filed only as standalone reports.
-4. Run `python ../kb-framework/pipeline/ingest.py --kb .` to grow the KB one PDF at a time,
+   read it; without it, sources are filed only as standalone reports.
+4. Run `python ../kb-framework/pipeline/ingest.py --kb .` to grow the KB one source at a time,
    or `python ../kb-framework/pipeline/bootstrap.py --kb . --clean` to build it from scratch
    toward the `mkdocs.yml` nav blueprint.
 

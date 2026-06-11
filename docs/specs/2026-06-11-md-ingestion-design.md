@@ -1,6 +1,6 @@
 # Design: Markdown source ingestion
 
-- **Status:** approved, pending implementation
+- **Status:** implemented (`pipeline/ingest.py`, `tests/test_ingest_md.py`)
 - **Date:** 2026-06-11
 - **Scope:** `kb-framework/pipeline/ingest.py`
 - **Tracks:** EurSuRA-kb issue #7 ("Ingesting of MD files")

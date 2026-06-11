@@ -1,9 +1,13 @@
 """
-Ingestion pipeline: PDF → enriched Markdown → docs folder.
+Ingestion pipeline: source (PDF or Markdown) → enriched Markdown → docs folder.
+
+Raw sources (PDFs, or MD without frontmatter) are rewritten Wikipedia-style and
+tagged. Authored MD (carrying its own leading frontmatter) is preserved verbatim,
+with the tagger only filling missing required fields.
 
 Usage:
-    python ingest.py --kb <path-to-kb>          # process all PDFs in inbox/
-    python ingest.py --kb <path> --file <pdf>   # process one specific PDF
+    python ingest.py --kb <path-to-kb>            # process all .pdf/.md in inbox/
+    python ingest.py --kb <path> --file <source>  # process one .pdf or .md
 """
 
 import os
@@ -69,6 +73,27 @@ def extract_markdown(pdf_path: Path) -> str:
 
     raise RuntimeError(f"No PDF extraction tool available. Install marker-pdf or pypdf.")
 
+
+def extract_content(src_path: Path) -> str:
+    """Raw Markdown for a source, dispatched by extension.
+
+    `.pdf` → marker/pypdf extraction; `.md` → the file *is* the content;
+    anything else is unsupported and routed to failed/ by the caller.
+    """
+    suffix = src_path.suffix.lower()
+    if suffix == ".pdf":
+        return extract_markdown(src_path)
+    if suffix == ".md":
+        return src_path.read_text(encoding="utf-8")
+    raise RuntimeError(f"Unsupported source type: {src_path.suffix} ({src_path.name})")
+
+
+def discover_sources(inbox: Path, file_arg: str | None):
+    """Sources to ingest: a single --file, else every .pdf and .md in the inbox."""
+    if file_arg:
+        return [Path(file_arg)]
+    return sorted([*inbox.glob("*.pdf"), *inbox.glob("*.md")])
+
 # ── Claude enrichment ──────────────────────────────────────────────────────────
 
 def load_agent_prompt(framework_path: Path, agent_name: str) -> str:
@@ -120,6 +145,63 @@ def split_frontmatter(text: str):
         if len(parts) >= 3:
             return (yaml.safe_load(parts[1]) or {}), parts[2].strip()
     return {}, text.strip()
+
+
+# ── Raw-vs-authored fork (Markdown sources) ───────────────────────────────────
+
+# Minimum frontmatter the downstream routing (domain merge) and lint need. An
+# authored MD that supplies all of these skips the tagger entirely.
+REQUIRED_FM = ("content_type", "domain", "status")
+
+
+def has_required_fm(fm: dict) -> bool:
+    return all(fm.get(k) for k in REQUIRED_FM)
+
+
+def parse_source_frontmatter(raw_content: str):
+    """Split leading frontmatter from extracted content.
+
+    Returns ``(fm, body, malformed)``. Malformed YAML in the leading block is
+    not fatal: the source is treated as raw (``fm == {}``, original content
+    preserved) and ``malformed`` is True so the caller can log a warning.
+    """
+    try:
+        fm, body = split_frontmatter(raw_content)
+        return fm, body, False
+    except yaml.YAMLError:
+        return {}, raw_content.strip(), True
+
+
+def _tag(framework_path: Path, source_meta: str, text: str) -> dict:
+    """Run the tagger agent and parse its YAML, mirroring the legacy fallback."""
+    tag_prompt = load_agent_prompt(framework_path, "tagger")
+    fm_yaml = call_claude(tag_prompt, f"{source_meta}\n\n---\n\n{text[:6000]}", label="tagger")
+    fm_yaml = fm_yaml.strip().lstrip("---").strip()
+    try:
+        return yaml.safe_load(fm_yaml) or {}
+    except yaml.YAMLError:
+        return {"content_type": "report", "status": "draft"}
+
+
+def build_article(existing_fm: dict, body: str, raw_content: str,
+                  framework_path: Path, source_meta: str):
+    """Produce ``(article_md, frontmatter)`` for a source.
+
+    Authored MD (leading frontmatter present) is preserved verbatim and the
+    tagger only fills missing required fields — the author always wins on
+    conflicts. Raw content (no frontmatter) is rewritten Wikipedia-style and
+    fully tagged, exactly as PDFs have always been handled.
+    """
+    if existing_fm:
+        if has_required_fm(existing_fm):
+            return body, dict(existing_fm)
+        tagger_fm = _tag(framework_path, source_meta, body)
+        return body, {**tagger_fm, **existing_fm}
+
+    wiki_prompt = load_agent_prompt(framework_path, "wikipedia-style")
+    article_md = call_claude(wiki_prompt, f"{source_meta}\n\n---\n\n{raw_content[:12000]}",
+                             label="wikipedia-style")
+    return article_md, _tag(framework_path, source_meta, article_md)
 
 
 def domain_index_path(docs_root: Path, frontmatter: dict, domain_map: dict):
@@ -299,42 +381,40 @@ def _append_changelog(changelog: Path, pdf_name: str, out_path: Path, docs_root:
 
 # ── Main ingest ────────────────────────────────────────────────────────────────
 
-def ingest_pdf(pdf_path: Path, paths: dict, framework_path: Path, kb_config: dict):
+def ingest_source(src_path: Path, paths: dict, framework_path: Path, kb_config: dict):
     ingest_log  = paths["logs"] / "ingestion.log"
     enrich_log  = paths["logs"] / "enrichment.log"
-    source_name = pdf_path.stem.lower().replace(" ", "-")
+    source_name = src_path.stem.lower().replace(" ", "-")
 
-    log(ingest_log, "INFO", f"START {pdf_path.name}")
+    log(ingest_log, "INFO", f"START {src_path.name}")
 
     try:
-        # 1. Extract raw Markdown
-        raw_md = extract_markdown(pdf_path)
-        log(ingest_log, "INFO", f"EXTRACTED {len(raw_md)} chars from {pdf_path.name}")
+        # 1. Extract raw content (PDF → marker/pypdf; MD → verbatim)
+        raw_content = extract_content(src_path)
+        log(ingest_log, "INFO", f"EXTRACTED {len(raw_content)} chars from {src_path.name}")
 
         source_meta = (
-            f"Source file: {pdf_path.name}\n"
+            f"Source file: {src_path.name}\n"
             f"Source body: {kb_config.get('default_source_body', 'Unknown')}\n"
             f"Date: {datetime.date.today().isoformat()}"
         )
-        user_input = f"{source_meta}\n\n---\n\n{raw_md[:12000]}"
 
-        # 2. Rewrite to Wikipedia style
-        wiki_prompt = load_agent_prompt(framework_path, "wikipedia-style")
-        article_md  = call_claude(wiki_prompt, user_input, label="wikipedia-style")
-        log(enrich_log, "INFO", f"STYLE_APPLIED {pdf_path.name}")
+        # 2-3. Authored MD (has frontmatter) is preserved; raw content is
+        # rewritten Wikipedia-style and tagged. The presence of a leading
+        # frontmatter block is the only signal.
+        existing_fm, body, malformed = parse_source_frontmatter(raw_content)
+        if malformed:
+            log(enrich_log, "WARN", f"MALFORMED_FM {src_path.name}: leading block ignored, treated as raw")
+        if existing_fm and not body:
+            log(enrich_log, "WARN", f"EMPTY_BODY {src_path.name}: authored frontmatter with no body")
+        article_md, frontmatter = build_article(existing_fm, body, raw_content, framework_path, source_meta)
+        log(enrich_log, "INFO",
+            f"{'PRESERVED' if existing_fm else 'STYLE_APPLIED'} {src_path.name}")
 
-        # 3. Generate frontmatter
-        tag_prompt    = load_agent_prompt(framework_path, "tagger")
-        frontmatter_yaml = call_claude(tag_prompt, f"{source_meta}\n\n---\n\n{article_md[:6000]}", label="tagger")
-        frontmatter_yaml = frontmatter_yaml.strip().lstrip("---").strip()
-        try:
-            frontmatter = yaml.safe_load(frontmatter_yaml)
-        except yaml.YAMLError:
-            frontmatter = {"content_type": "report", "status": "draft"}
-        frontmatter["date_added"] = datetime.date.today().isoformat()
+        frontmatter.setdefault("date_added", datetime.date.today().isoformat())
         frontmatter["date_updated"] = datetime.date.today().isoformat()
-        frontmatter["source_file"] = pdf_path.name
-        log(enrich_log, "INFO", f"TAGGED {pdf_path.name} → domain={frontmatter.get('domain')}")
+        frontmatter["source_file"] = src_path.name
+        log(enrich_log, "INFO", f"TAGGED {src_path.name} → domain={frontmatter.get('domain')}")
 
         # 4. Determine target and assemble content (Layer 1: domain merge)
         domain_map = {k.upper(): v for k, v in (kb_config.get("domains") or {}).items()}
@@ -343,7 +423,7 @@ def ingest_pdf(pdf_path: Path, paths: dict, framework_path: Path, kb_config: dic
             # Mergeable type with an existing canonical page → grow that page.
             existing_fm, existing_body = split_frontmatter(target_index.read_text(encoding="utf-8"))
             merged_body = merge_into_domain(framework_path, existing_body, article_md, source_meta)
-            merged_fm   = merge_frontmatter(existing_fm, frontmatter, pdf_path.name)
+            merged_fm   = merge_frontmatter(existing_fm, frontmatter, src_path.name)
             fm_block      = "---\n" + yaml.dump(merged_fm, allow_unicode=True, sort_keys=False) + "---\n\n"
             final_content = fm_block + merged_body
             out_path      = target_index
@@ -364,17 +444,17 @@ def ingest_pdf(pdf_path: Path, paths: dict, framework_path: Path, kb_config: dic
         try:
             enrich_glossary(paths, framework_path, article_md, source_meta, enrich_log)
         except Exception as e:
-            log(enrich_log, "WARN", f"GLOSSARY_SKIP {pdf_path.name}: {e}")
+            log(enrich_log, "WARN", f"GLOSSARY_SKIP {src_path.name}: {e}")
 
-        # 6. Move PDF to processed
-        dest = paths["processed"] / pdf_path.name
-        shutil.move(str(pdf_path), str(dest))
-        log(ingest_log, "INFO", f"DONE {pdf_path.name} → {out_path.name}")
+        # 6. Move source to processed
+        dest = paths["processed"] / src_path.name
+        shutil.move(str(src_path), str(dest))
+        log(ingest_log, "INFO", f"DONE {src_path.name} → {out_path.name}")
 
         # 7. Append to CHANGELOG.md
         _append_changelog(
             changelog=paths["logs"].parent / "CHANGELOG.md",
-            pdf_name=pdf_path.name,
+            pdf_name=src_path.name,
             out_path=out_path,
             docs_root=paths["docs"],
             frontmatter=frontmatter,
@@ -393,8 +473,8 @@ def ingest_pdf(pdf_path: Path, paths: dict, framework_path: Path, kb_config: dic
         return out_path
 
     except Exception as e:
-        shutil.move(str(pdf_path), str(paths["failed"] / pdf_path.name))
-        log(ingest_log, "ERROR", f"FAILED {pdf_path.name}: {e}")
+        shutil.move(str(src_path), str(paths["failed"] / src_path.name))
+        log(ingest_log, "ERROR", f"FAILED {src_path.name}: {e}")
         raise
 
 # ── Entry point ────────────────────────────────────────────────────────────────
@@ -402,7 +482,7 @@ def ingest_pdf(pdf_path: Path, paths: dict, framework_path: Path, kb_config: dic
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--kb", required=True, help="Path to KB root folder")
-    parser.add_argument("--file", help="Process a single PDF file")
+    parser.add_argument("--file", help="Process a single source file (.pdf or .md)")
     args = parser.parse_args()
 
     if hasattr(sys.stdout, "reconfigure"):
@@ -417,15 +497,15 @@ def main():
     fw_raw = kb_config.get("framework_path", "framework")
     framework_path = (kb_root / fw_raw).resolve()
 
-    pdfs = [Path(args.file)] if args.file else sorted(paths["inbox"].glob("*.pdf"))
-    if not pdfs:
-        print("No PDFs found in inbox.")
+    sources = discover_sources(paths["inbox"], args.file)
+    if not sources:
+        print("No .pdf or .md sources found in inbox.")
         return
 
     ingested = []
-    for pdf in pdfs:
+    for source in sources:
         try:
-            out = ingest_pdf(pdf, paths, framework_path, kb_config)
+            out = ingest_source(source, paths, framework_path, kb_config)
             ingested.append(out)
         except Exception:
             continue
