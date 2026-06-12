@@ -36,3 +36,22 @@ def test_scaffold_missing_never_overwrites(tmp_path):
 
     assert created == []
     assert (kb / "docs" / "index.md").read_text(encoding="utf-8") == "# Real content\n"
+
+
+def test_reconcile_links_records_unresolved_terms(tmp_path, monkeypatch):
+    import finalize
+    kb = _make_kb(tmp_path, "  - Home: index.md\n")
+    (kb / "config").mkdir()
+
+    class FakeBuild:
+        returncode = 0
+        stdout = "WARNING - wikilinks: unresolved [[Green Software Foundation]] in x.md\n"
+        stderr = ""
+
+    monkeypatch.setattr(finalize.subprocess, "run", lambda *a, **k: FakeBuild())
+
+    recorded = finalize.reconcile_links(kb)
+
+    assert recorded == 1
+    text = (kb / "config" / "known_external.txt").read_text(encoding="utf-8")
+    assert "green software foundation" in text
