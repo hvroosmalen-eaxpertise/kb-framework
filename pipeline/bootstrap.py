@@ -12,7 +12,6 @@ import sys
 import shutil
 import datetime
 import argparse
-import subprocess
 from pathlib import Path
 
 import yaml
@@ -24,6 +23,7 @@ from ingest import (
     split_frontmatter, merge_into_domain, merge_frontmatter, determine_output_path,
     enrich_glossary, _update_nav, _append_changelog,
 )
+from finalize import finalize, parse_nav, scaffold_missing, reconcile_links
 
 SECTION_RE = re.compile(r"^##\s*DOMAIN:\s*(.+?)\s*$", re.MULTILINE)
 
@@ -41,42 +41,6 @@ def parse_splitter_output(text: str, known_tags) -> dict:
         if tag in known and body:
             blocks[tag] = body
     return blocks
-
-
-def parse_nav(mkdocs_yml: Path) -> list:
-    """[(label, rel_path)] for every page in the nav; label is the nearest dict key."""
-    cfg = yaml.safe_load(mkdocs_yml.read_text(encoding="utf-8")) or {}
-    pairs = []
-
-    def walk(node, label=None):
-        if isinstance(node, str):
-            pairs.append((label or node, node))
-        elif isinstance(node, list):
-            for item in node:
-                walk(item, label)
-        elif isinstance(node, dict):
-            for key, value in node.items():
-                walk(value, key)
-
-    walk(cfg.get("nav", []))
-    return pairs
-
-
-def scaffold_missing(kb_root: Path) -> list:
-    """Write a minimal valid stub for any nav page with no file. Never overwrites."""
-    docs = kb_root / "docs"
-    created = []
-    for label, rel in parse_nav(kb_root / "mkdocs.yml"):
-        page = docs / rel
-        if page.exists():
-            continue
-        page.parent.mkdir(parents=True, exist_ok=True)
-        page.write_text(
-            f"---\ntitle: {label}\nstatus: draft\n---\n\n# {label}\n\n"
-            "*Placeholder page scaffolded by bootstrap. Ingest sources to fill it.*\n",
-            encoding="utf-8")
-        created.append(rel)
-    return created
 
 
 def clean_docs(kb_root: Path) -> int:
@@ -178,57 +142,6 @@ def _bootstrap_one(pdf, paths, framework_path, kb_config,
     return merged_any
 
 
-def _regenerate(kb_root: Path, framework_path: Path) -> None:
-    """Regenerate models (3), cross-ref, synthesis, catalog via query.py subprocesses."""
-    query = framework_path / "pipeline" / "query.py"
-    for model in ("semantic-model", "concept-map", "ontology"):
-        subprocess.run([sys.executable, str(query), "--kb", str(kb_root), "--model", model])
-    subprocess.run([sys.executable, str(query), "--kb", str(kb_root),
-                    "--cross-ref", "--synthesis", "--catalog"])
-
-
-def _rebuild(kb_root: Path, framework_path: Path) -> None:
-    rebuild = framework_path / "pipeline" / "rebuild.py"
-    if rebuild.exists():
-        subprocess.run([sys.executable, str(rebuild), "--kb", str(kb_root)])
-
-
-def reconcile_links(kb_root: Path) -> int:
-    """Make a from-scratch build strict-clean.
-
-    Runs a non-strict mkdocs build, harvests the ``unresolved [[wikilink]]`` warnings
-    the link hook emits, and records the (normalised) targets in
-    ``config/known_external.txt`` so a subsequent ``--strict`` build does not fail on
-    them. These are external concepts the LLM referenced that are not (yet) pages or
-    glossary terms. Returns the number of newly recorded terms.
-    """
-    build = subprocess.run([sys.executable, "-m", "mkdocs", "build",
-                            "--config-file", str(kb_root / "mkdocs.yml")],
-                           cwd=str(kb_root), capture_output=True, text=True)
-    found = re.findall(r"unresolved \[\[([^\]]+)\]\]", build.stdout + build.stderr)
-    norm = {re.sub(r"\s+", " ", t.split("|")[0]).strip().lower() for t in found}
-    norm = {t for t in norm if t}
-    if not norm:
-        return 0
-    kx = kb_root / "config" / "known_external.txt"
-    existing = set()
-    if kx.exists():
-        existing = {re.sub(r"\s+", " ", line).strip().lower()
-                    for line in kx.read_text(encoding="utf-8").splitlines()}
-    new = sorted(norm - existing)
-    if not new:
-        return 0
-    kx.parent.mkdir(parents=True, exist_ok=True)
-    with open(kx, "a", encoding="utf-8") as fh:
-        if not existing:
-            fh.write("# Auto-recorded by bootstrap: external concepts referenced by "
-                     "[[wikilinks]]\n# but not (yet) pages or glossary terms. Promote one "
-                     "by adding a page/glossary\n# entry and removing it here.\n")
-        for term in new:
-            fh.write(term + "\n")
-    return len(new)
-
-
 def run_bootstrap(kb_root: Path, framework_path: Path, kb_config: dict, clean: bool = False):
     paths = resolve_paths(kb_root)
     ingest_log = paths["logs"] / "ingestion.log"
@@ -256,14 +169,9 @@ def run_bootstrap(kb_root: Path, framework_path: Path, kb_config: dict, clean: b
             except Exception:
                 pass
 
-    _regenerate(kb_root, framework_path)
-    created = scaffold_missing(kb_root)
-    if created:
-        log(ingest_log, "INFO", f"BOOTSTRAP_SCAFFOLD {len(created)} stub pages")
-    recorded = reconcile_links(kb_root)
-    if recorded:
-        log(ingest_log, "INFO", f"BOOTSTRAP_RECONCILE {recorded} external links recorded")
-    _rebuild(kb_root, framework_path)
+    # From-scratch rebuilds finalise like everyday runs, but commit locally for
+    # review (no auto-push).
+    finalize(kb_root, framework_path, kb_config, strict=True, push=False)
 
     # Full cross-process tally (parent + query.py subprocesses share token_usage.jsonl).
     print(usage.format_tally(usage.tally(paths["logs"])))

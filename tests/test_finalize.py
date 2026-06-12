@@ -57,6 +57,29 @@ def test_reconcile_links_records_unresolved_terms(tmp_path, monkeypatch):
     assert "green software foundation" in text
 
 
+def test_reconcile_links_strips_alias_and_is_idempotent(tmp_path, monkeypatch):
+    import finalize
+    kb = _make_kb(tmp_path, "  - Home: index.md\n")
+    (kb / "config").mkdir()
+
+    class FakeBuild:
+        returncode = 0
+        stdout = ("WARNING - wikilinks: unresolved [[EFRAG]] in insights/x.md\n"
+                  "WARNING - wikilinks: unresolved [[Science-Based Targets|SBT]] in y.md\n")
+        stderr = ""
+
+    monkeypatch.setattr(finalize.subprocess, "run", lambda *a, **k: FakeBuild())
+
+    recorded = finalize.reconcile_links(kb)
+
+    assert recorded == 2
+    kx = (kb / "config" / "known_external.txt").read_text(encoding="utf-8").lower()
+    assert "efrag" in kx
+    assert "science-based targets" in kx        # the |alias is stripped
+    # Idempotent: a second run records nothing new.
+    assert finalize.reconcile_links(kb) == 0
+
+
 def _stub_finalize_steps(finalize, monkeypatch):
     """No-op the pre-gate steps so tests isolate the gate/commit logic."""
     monkeypatch.setattr(finalize, "_regenerate", lambda *a, **k: None)

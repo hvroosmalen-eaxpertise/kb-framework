@@ -162,8 +162,13 @@ def test_run_bootstrap_end_to_end_strict_build(tmp_path: Path, monkeypatch):
 
     monkeypatch.setattr(bootstrap, "extract_markdown", lambda p: "raw text")
     _patch_llm(monkeypatch)
-    monkeypatch.setattr(bootstrap, "_regenerate", lambda *a, **k: None)
-    monkeypatch.setattr(bootstrap, "_rebuild", lambda *a, **k: None)
+    # run_bootstrap now finalises via the shared finalize module; stub the
+    # subprocess-heavy / git steps but let scaffold_missing + reconcile_links run.
+    import finalize
+    monkeypatch.setattr(finalize, "_regenerate", lambda *a, **k: None)
+    monkeypatch.setattr(finalize, "_run_lint", lambda *a, **k: 0)
+    monkeypatch.setattr(finalize, "_strict_build", lambda *a, **k: 0)
+    monkeypatch.setattr(finalize, "_commit", lambda *a, **k: False)
 
     kb_cfg = yaml.safe_load((tmp_path / "config" / "kb.yaml").read_text(encoding="utf-8"))
     bootstrap.run_bootstrap(tmp_path, fw, kb_cfg, clean=True)
@@ -205,20 +210,4 @@ def test_bootstrap_one_merges_into_existing_domain_page(tmp_path: Path, monkeypa
     assert "src.pdf" in text                    # merge_frontmatter recorded the source
 
 
-def test_reconcile_links_records_unresolved(tmp_path: Path, monkeypatch):
-    (tmp_path / "config").mkdir()
-    (tmp_path / "mkdocs.yml").write_text("site_name: T\n", encoding="utf-8")
-
-    class _Result:
-        stdout = ("WARNING - wikilinks: unresolved [[EFRAG]] in insights/x.md\n"
-                  "WARNING - wikilinks: unresolved [[Science-Based Targets|SBT]] in y.md\n")
-        stderr = ""
-
-    monkeypatch.setattr(bootstrap.subprocess, "run", lambda *a, **k: _Result())
-    recorded = bootstrap.reconcile_links(tmp_path)
-    assert recorded == 2
-    kx = (tmp_path / "config" / "known_external.txt").read_text(encoding="utf-8").lower()
-    assert "efrag" in kx
-    assert "science-based targets" in kx        # the |alias is stripped
-    # Idempotent: a second run records nothing new.
-    assert bootstrap.reconcile_links(tmp_path) == 0
+# reconcile_links moved to finalize.py; its tests live in test_finalize.py.
