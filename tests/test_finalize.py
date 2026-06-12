@@ -55,3 +55,58 @@ def test_reconcile_links_records_unresolved_terms(tmp_path, monkeypatch):
     assert recorded == 1
     text = (kb / "config" / "known_external.txt").read_text(encoding="utf-8")
     assert "green software foundation" in text
+
+
+def _stub_finalize_steps(finalize, monkeypatch):
+    """No-op the pre-gate steps so tests isolate the gate/commit logic."""
+    monkeypatch.setattr(finalize, "_regenerate", lambda *a, **k: None)
+    monkeypatch.setattr(finalize, "scaffold_missing", lambda *a, **k: [])
+    monkeypatch.setattr(finalize, "reconcile_links", lambda *a, **k: 0)
+
+
+def test_finalize_aborts_before_commit_on_lint_failure(tmp_path, monkeypatch):
+    import finalize
+    _stub_finalize_steps(finalize, monkeypatch)
+    monkeypatch.setattr(finalize, "_run_lint", lambda *a, **k: 1)
+    monkeypatch.setattr(finalize, "_strict_build", lambda *a, **k: 0)
+    commits = []
+    monkeypatch.setattr(finalize, "_commit", lambda *a, **k: commits.append(1) or True)
+
+    rc = finalize.finalize(tmp_path, tmp_path, {}, lint=True, strict=True,
+                           commit=True, push=False)
+
+    assert rc == 1
+    assert commits == []
+
+
+def test_finalize_aborts_before_commit_on_strict_build_failure(tmp_path, monkeypatch):
+    import finalize
+    _stub_finalize_steps(finalize, monkeypatch)
+    monkeypatch.setattr(finalize, "_run_lint", lambda *a, **k: 0)
+    monkeypatch.setattr(finalize, "_strict_build", lambda *a, **k: 1)
+    commits = []
+    monkeypatch.setattr(finalize, "_commit", lambda *a, **k: commits.append(1) or True)
+
+    rc = finalize.finalize(tmp_path, tmp_path, {}, lint=True, strict=True,
+                           commit=True, push=False)
+
+    assert rc == 1
+    assert commits == []
+
+
+def test_finalize_commits_when_gates_pass(tmp_path, monkeypatch):
+    import finalize
+    _stub_finalize_steps(finalize, monkeypatch)
+    monkeypatch.setattr(finalize, "_run_lint", lambda *a, **k: 0)
+    monkeypatch.setattr(finalize, "_strict_build", lambda *a, **k: 0)
+    calls = {"commit": 0, "push": 0}
+    monkeypatch.setattr(finalize, "_commit",
+                        lambda *a, **k: calls.__setitem__("commit", calls["commit"] + 1) or True)
+    monkeypatch.setattr(finalize, "_push",
+                        lambda *a, **k: calls.__setitem__("push", calls["push"] + 1))
+
+    rc = finalize.finalize(tmp_path, tmp_path, {}, lint=True, strict=True,
+                           commit=True, push=True)
+
+    assert rc == 0
+    assert calls == {"commit": 1, "push": 1}
