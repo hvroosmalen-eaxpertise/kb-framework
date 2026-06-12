@@ -110,3 +110,18 @@ def test_finalize_commits_when_gates_pass(tmp_path, monkeypatch):
 
     assert rc == 0
     assert calls == {"commit": 1, "push": 1}
+
+
+def test_orchestrate_aborts_when_ingest_fails(tmp_path, monkeypatch):
+    import orchestrate
+    monkeypatch.setattr(orchestrate, "_ingest", lambda *a, **k: 2)
+    called = {"finalize": 0}
+    monkeypatch.setattr(orchestrate, "finalize",
+                        lambda *a, **k: called.__setitem__("finalize", 1) or 0)
+    monkeypatch.setattr(sys, "argv", ["orchestrate.py", "--kb", str(tmp_path)])
+
+    with pytest.raises(SystemExit) as exc:
+        orchestrate.main()
+
+    assert exc.value.code == 2
+    assert called["finalize"] == 0
