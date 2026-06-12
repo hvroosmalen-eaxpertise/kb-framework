@@ -57,7 +57,7 @@ See [`schemas/README.md`](schemas/README.md) for the schema overview (the three 
 |---|---|
 | [`ingest.py`](pipeline/ingest.py) | Process sources (`.pdf` or `.md`) from `pipeline/inbox/` → enriched Markdown in `docs/` |
 | [`orchestrate.py`](pipeline/orchestrate.py) | Everyday loop: ingest the inbox, then finalise (regenerate → scaffold → reconcile links → lint → strict build → commit → push) |
-| [`finalize.py`](pipeline/finalize.py) | The finalise sequence on its own (no ingest); shared by `orchestrate.py` and `bootstrap.py`. Use `--no-push` to commit for review |
+| [`finalize.py`](pipeline/finalize.py) | The finalise sequence on its own (no ingest); shared by `orchestrate.py` and `bootstrap.py`. Use `--no-push` to commit for review. Note: regenerate still makes paid Claude calls (`--model`/`--synthesis`), so this is *not* free even without ingest |
 | [`rebuild.py`](pipeline/rebuild.py) | Run `mkdocs build` and optionally commit + push the result |
 | [`query.py`](pipeline/query.py) | Regenerate derived artefacts: `--synthesis`, `--cross-ref`, `--model`, `--catalog` |
 | [`lint.py`](pipeline/lint.py) | Health-check the KB: orphans, stale/dangling sources, missing cross-refs; `--deep` adds contradiction detection |

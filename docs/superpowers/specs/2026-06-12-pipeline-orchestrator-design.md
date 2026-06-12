@@ -117,9 +117,9 @@ Any gate failure prints `ABORT: <step> — <reason>`, exits non-zero, and leaves
   and the strict build.
 - Token usage tally printed at the end (reuse `usage.format_tally`).
 
-## Testing (API-free, per the KB verification approach)
+## Testing (per the KB verification approach)
 
-No live Claude calls. Cover the finalise half:
+Unit tests below make **no live Claude calls**. Cover the finalise half:
 
 - `scaffold_missing`: stubs missing nav pages; never overwrites an existing file.
 - `reconcile_links`: tmp KB containing an unresolved `[[link]]` → assert the
@@ -127,9 +127,10 @@ No live Claude calls. Cover the finalise half:
   behaviour holds).
 - `finalize()` gate logic: monkeypatch lint and/or the strict build to fail →
   assert the run aborts **before** commit (tmp git repo; assert no new commit).
-- Smoke test: `python finalize.py --kb <EurSuRA-kb> --no-push` — fully API-free
-  (no ingest), exercises regenerate → scaffold → reconcile → lint → strict build
-  → local commit.
+- Smoke test (live, **not** API-free): `python finalize.py --kb <EurSuRA-kb> --no-push`
+  exercises regenerate → scaffold → reconcile → lint → strict build → local commit.
+  Skipping ingest skips only the ingest calls; `_regenerate` still makes paid Claude
+  calls via `query.py --model`/`--synthesis` (~45K tokens measured).
 
 The LLM/ingest half is not unit-tested here (needs API); validate it with
 `--file` on a single small source when an API key is available.

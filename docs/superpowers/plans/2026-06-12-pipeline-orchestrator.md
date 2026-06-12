@@ -672,15 +672,20 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 
 ---
 
-## Task 6: API-free smoke test on EurSuRA-kb
+## Task 6: Live smoke test on EurSuRA-kb
 
 **Files:** none (verification only)
+
+> **Note (corrected 2026-06-12):** this smoke test is **not** API-free. `finalize()`'s
+> `_regenerate` step runs `query.py --model` (×3) and `--synthesis`, which make paid Claude
+> calls (`--cross-ref`/`--catalog` are deterministic). Skipping ingest only skips the *ingest*
+> calls. Budget for it (~45K tokens measured on the live KB).
 
 - [ ] **Step 1: Run finalise-only against the live KB, holding the commit**
 
 Run (from `kb-framework/pipeline/`, with `<KB>` = absolute path to `EurSuRA-kb`):
 `python finalize.py --kb <KB> --no-push --no-commit`
-Expected: regenerate output, then `0` exit. No ingest (no API calls). If the strict build aborts, that is a real content issue to fix before proceeding — do not weaken the gate.
+Expected: regenerate output (models + synthesis are paid Claude calls), then `0` exit. If the strict build aborts, that is a real content issue to fix before proceeding — do not weaken the gate.
 
 - [ ] **Step 2: Confirm the working tree shows only regenerated/derived changes**
 
@@ -745,7 +750,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 - Fail-fast gates (lint + strict build before commit) → Task 3 (`finalize()`), tested in Task 3 steps. ✓
 - Push defaults (orchestrate/finalize auto-push; bootstrap no-push) → Task 4 (`push` default True), Task 5 (`push=False`). ✓
 - `reconcile_links` before strict build → ordering inside `finalize()` (Task 3). ✓
-- Testing: scaffold, reconcile, gate-abort → Tasks 1-3; API-free smoke → Task 6. ✓
+- Testing: scaffold, reconcile, gate-abort → Tasks 1-3; live smoke (paid regenerate) → Task 6. ✓
 - Docs update → Task 7. ✓
 
 **Placeholder scan:** No TBD/TODO; every code step shows complete code; Task 7 Step 2 is conditional (skip if no section), not a placeholder. ✓
