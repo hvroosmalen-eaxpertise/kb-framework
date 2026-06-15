@@ -9,6 +9,7 @@ kb-framework/
 ├── agents/       Claude agent prompts for each enrichment step
 ├── rules/        Editorial rules for human and agent authors
 ├── schemas/      YAML frontmatter schemas for each content type
+├── assets/       Shared static assets (JavaScript, CSS) served at build time
 └── pipeline/     Python scripts for ingestion, querying and rebuilding
 ```
 
@@ -50,6 +51,16 @@ See [`schemas/README.md`](schemas/README.md) for the schema overview (the three 
 | [`standard.yaml`](schemas/standard.yaml) | Mandatory standards and directives (ESRS, CSRD, EU Taxonomy) |
 | [`report.yaml`](schemas/report.yaml) | Ingested source documents and sustainability reports |
 | [`term.yaml`](schemas/term.yaml) | Glossary entries |
+
+## Shared Assets
+
+Static files under `assets/` are consumed by consumer KBs at build time — typically
+copied into `docs/` by a MkDocs `on_config` hook so they're served alongside site
+content.
+
+| Asset | Purpose |
+|---|---|
+| [`assets/javascripts/mermaid-toolbar.js`](assets/javascripts/mermaid-toolbar.js) | Client-side Mermaid diagram rendering with a toolbar (Copy source, Download SVG, Open SVG). Used by KBs that render ` ```mermaid ` blocks without relying on the MkDocs Material theme built-in loader. |
 
 ## Pipeline Scripts
 
