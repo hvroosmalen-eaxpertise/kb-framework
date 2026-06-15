@@ -120,7 +120,11 @@ def nav_paths_from_mkdocs(kb_root: Path) -> set[str]:
     mk = kb_root / "mkdocs.yml"
     if not mk.exists():
         return set()
-    cfg = yaml.safe_load(mk.read_text(encoding="utf-8")) or {}
+    # Strip !!python/name tags (e.g. from Mermaid superfences config) that
+    # safe_load cannot handle — they aren't needed for nav extraction.
+    text = mk.read_text(encoding="utf-8")
+    text = re.sub(r"!!python/name:\S+", "null", text)
+    cfg = yaml.safe_load(text) or {}
     found: set[str] = set()
 
     def walk(node):
