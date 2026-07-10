@@ -94,6 +94,26 @@ def discover_sources(inbox: Path, file_arg: str | None):
         return [Path(file_arg)]
     return sorted([*inbox.glob("*.pdf"), *inbox.glob("*.md")])
 
+
+# English function words that are near-ubiquitous in real prose but essentially
+# absent from mojibake (a broken font/ToUnicode map maps glyphs to junk codepoints).
+_READABLE_MARKERS = (" the ", " and ", " of ", " to ", " that ", " is ", " in ")
+
+
+def extraction_looks_readable(text: str, min_ratio: float = 1 / 500) -> bool:
+    """Cheap guard against unusable extraction *before* any enrichment spend.
+
+    Catches both failure modes a char-count check misses on its own: an image-only
+    PDF (near-empty text) and a broken-font PDF (high char count but mojibake).
+    Real English runs ~1 marker per 50-90 chars; mojibake ~1 per 13000. A 1/500
+    threshold sits well inside that gap.
+    """
+    if not text.strip():
+        return False
+    low = text.lower()
+    hits = sum(low.count(m) for m in _READABLE_MARKERS)
+    return hits >= len(low) * min_ratio
+
 # ── Claude enrichment ──────────────────────────────────────────────────────────
 
 def load_agent_prompt(framework_path: Path, agent_name: str) -> str:
@@ -505,6 +525,15 @@ def ingest_source(src_path: Path, paths: dict, framework_path: Path, kb_config: 
         # 1. Extract raw content (PDF → marker/pypdf; MD → verbatim)
         raw_content = extract_content(src_path)
         log(ingest_log, "INFO", f"EXTRACTED {len(raw_content)} chars from {src_path.name}")
+
+        # 1b. Refuse to enrich unreadable extraction. PDFs with a broken font map
+        # yield high-volume mojibake that an LLM will faithfully hallucinate over;
+        # image-only PDFs yield near-empty text. Both are caught here before spend.
+        # Authored MD is trusted verbatim and skips the check.
+        if src_path.suffix.lower() == ".pdf" and not extraction_looks_readable(raw_content):
+            raise RuntimeError(
+                f"unreadable extraction from {src_path.name} ({len(raw_content)} chars, "
+                f"likely a broken font encoding or image-only PDF) — needs OCR")
 
         source_meta = (
             f"Source file: {src_path.name}\n"
