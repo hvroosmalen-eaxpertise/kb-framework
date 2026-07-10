@@ -21,7 +21,7 @@ import usage
 from ingest import (
     resolve_paths, log, extract_markdown, load_agent_prompt, call_claude,
     split_frontmatter, merge_into_domain, merge_frontmatter, determine_output_path,
-    enrich_glossary, _update_nav, _append_changelog,
+    enrich_glossary, resolve_enrich, _update_nav, _append_changelog,
 )
 from finalize import finalize, parse_nav, scaffold_missing, reconcile_links
 
@@ -75,6 +75,7 @@ def _bootstrap_one(pdf, paths, framework_path, kb_config,
     """Process one PDF. Returns True if it merged into >=1 domain page, else False (report)."""
     ingest_log = paths["logs"] / "ingestion.log"
     enrich_log = paths["logs"] / "enrichment.log"
+    enrich_cfg = resolve_enrich(kb_config)
     raw = extract_markdown(pdf)
     source_meta = (f"Source file: {pdf.name}\n"
                    f"Source body: {kb_config.get('default_source_body', 'Unknown')}\n"
@@ -97,7 +98,7 @@ def _bootstrap_one(pdf, paths, framework_path, kb_config,
         target = paths["docs"] / rel
         if target.exists():
             efm, ebody = split_frontmatter(target.read_text(encoding="utf-8"))
-            body = merge_into_domain(framework_path, ebody, prose, source_meta)
+            body = merge_into_domain(framework_path, ebody, prose, source_meta, enrich_cfg)
             fm = merge_frontmatter(efm, {"domain": [tag]}, pdf.name)
         else:
             body = prose
@@ -130,7 +131,7 @@ def _bootstrap_one(pdf, paths, framework_path, kb_config,
         log(ingest_log, "INFO", f"BOOTSTRAP_REPORT {pdf.name} -> {out_path.relative_to(paths['docs'])}")
 
     try:
-        enrich_glossary(paths, framework_path, article, source_meta, enrich_log)
+        enrich_glossary(paths, framework_path, article, source_meta, enrich_log, enrich_cfg)
     except Exception as exc:
         log(enrich_log, "WARN", f"GLOSSARY_SKIP {pdf.name}: {exc}")
 

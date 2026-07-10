@@ -24,7 +24,8 @@ def test_enrich_glossary_seeds_when_absent(tmp_path: Path, monkeypatch):
     paths = {"docs": docs, "logs": tmp_path / "logs"}
     monkeypatch.setattr(ingest, "call_claude", lambda *a, **k: "### Double Materiality\nImpact and financial.\n")
     monkeypatch.setattr(ingest, "load_agent_prompt", lambda *a, **k: "PROMPT")
-    ingest.enrich_glossary(paths, tmp_path, "article", "meta", paths["logs"] / "enrich.log")
+    ingest.enrich_glossary(paths, tmp_path, "article", "meta", paths["logs"] / "enrich.log",
+                           ingest.resolve_enrich({}))
     g = (docs / "glossary.md").read_text(encoding="utf-8")
     assert "# Glossary" in g and "Double Materiality" in g
 

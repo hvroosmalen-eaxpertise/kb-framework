@@ -116,6 +116,111 @@ def call_claude(system_prompt: str, user_content: str, model="claude-sonnet-4-6"
     usage.record(model, message.usage, label)
     return message.content[0].text
 
+
+# ── Enrichment backend dispatch ─────────────────────────────────────────────────
+#
+# Each enrichment call (tagger, rewrite, merge, glossary) is routed to a backend
+# by config. The built-in default is all-Claude, so a KB with no `enrich:` block
+# behaves exactly as before. See config/kb.yaml `enrich:` to opt into local Ollama.
+
+DEFAULT_ENRICH = {
+    "backends": {"claude": {"model": "claude-sonnet-4-6"}},
+    "tasks": {"tagger": "claude", "rewrite": "claude",
+              "merge": "claude", "glossary": "claude"},
+}
+
+
+def resolve_enrich(kb_config: dict) -> dict:
+    """Deep-merge a KB's `enrich:` block over the all-Claude default.
+
+    A missing block, or missing keys within it, resolve to Claude — the change
+    is opt-in and never alters behaviour for a KB that says nothing.
+    """
+    cfg = kb_config.get("enrich") or {}
+    return {
+        "backends": {**DEFAULT_ENRICH["backends"], **(cfg.get("backends") or {})},
+        "tasks": {**DEFAULT_ENRICH["tasks"], **(cfg.get("tasks") or {})},
+    }
+
+
+def _strip_think(text: str) -> str:
+    """Remove qwen3-style <think>...</think> chain-of-thought from model output."""
+    return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+
+
+def call_ollama(system_prompt: str, user_content: str, model: str,
+                host: str = "http://localhost:11434", num_ctx: int = 8192,
+                temperature: float = 0.1, label: str = "") -> str:
+    """Local enrichment via Ollama's /api/chat. Fails loud (no silent fallback).
+
+    Guards against silent context truncation: if the prompt alone would fill most
+    of ``num_ctx``, we raise rather than let Ollama quietly drop the overflow.
+    """
+    import urllib.request
+    import urllib.error
+
+    approx_in_tokens = (len(system_prompt) + len(user_content)) // 4
+    if approx_in_tokens > int(num_ctx * 0.7):
+        raise RuntimeError(
+            f"ollama input ~{approx_in_tokens} tok exceeds 70% of num_ctx={num_ctx} "
+            f"({label}, model={model}); raise num_ctx or shorten input to avoid "
+            f"silent truncation")
+
+    payload = {
+        "model": model,
+        "stream": False,
+        "think": False,  # disable qwen3 reasoning; we also strip <think> defensively
+        "options": {"num_ctx": num_ctx, "temperature": temperature},
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ],
+    }
+    req = urllib.request.Request(
+        f"{host.rstrip('/')}/api/chat",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=600) as resp:
+            body = json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8", "replace")
+        raise RuntimeError(
+            f"ollama backend HTTP {e.code} ({label}, model={model}): {detail}") from e
+    except urllib.error.URLError as e:
+        raise RuntimeError(
+            f"ollama backend unreachable at {host} ({label}): {e.reason}") from e
+
+    content = (body.get("message") or {}).get("content")
+    if not content:
+        raise RuntimeError(
+            f"ollama backend empty response ({label}, model={model}): "
+            f"{body.get('error', body)}")
+    return _strip_think(content)
+
+
+def enrich_call(task: str, system_prompt: str, user_content: str,
+                enrich_cfg: dict, label: str = "") -> str:
+    """Route one enrichment call to its configured backend (Claude or Ollama)."""
+    backend_name = enrich_cfg["tasks"].get(task, "claude")
+    backend = enrich_cfg["backends"].get(backend_name)
+    if backend is None:
+        raise RuntimeError(f"enrich task '{task}' → unknown backend '{backend_name}'")
+    if backend_name == "claude":
+        return call_claude(system_prompt, user_content,
+                           model=backend.get("model", "claude-sonnet-4-6"),
+                           label=label or task)
+    if backend_name == "ollama":
+        return call_ollama(system_prompt, user_content,
+                           model=backend["model"],
+                           host=backend.get("host", "http://localhost:11434"),
+                           num_ctx=backend.get("num_ctx", 8192),
+                           temperature=backend.get("temperature", 0.1),
+                           label=label or task)
+    raise RuntimeError(
+        f"enrich task '{task}' → unsupported backend type '{backend_name}'")
+
 def determine_output_path(docs_root: Path, frontmatter: dict, source_name: str) -> Path:
     content_type = frontmatter.get("content_type", "report")
     domains = frontmatter.get("domain", [])
@@ -172,11 +277,14 @@ def parse_source_frontmatter(raw_content: str):
         return {}, raw_content.strip(), True
 
 
-def _tag(framework_path: Path, source_meta: str, text: str) -> dict:
+def _tag(framework_path: Path, source_meta: str, text: str, enrich_cfg: dict) -> dict:
     """Run the tagger agent and parse its YAML, mirroring the legacy fallback."""
     tag_prompt = load_agent_prompt(framework_path, "tagger")
-    fm_yaml = call_claude(tag_prompt, f"{source_meta}\n\n---\n\n{text[:6000]}", label="tagger")
+    fm_yaml = enrich_call("tagger", tag_prompt, f"{source_meta}\n\n---\n\n{text[:6000]}",
+                          enrich_cfg, label="tagger")
     fm_yaml = fm_yaml.strip().lstrip("---").strip()
+    # Local models sometimes wrap YAML in a ```yaml fence; strip it before parsing.
+    fm_yaml = re.sub(r"^```(?:yaml)?\s*|\s*```$", "", fm_yaml.strip()).strip()
     try:
         return yaml.safe_load(fm_yaml) or {}
     except yaml.YAMLError:
@@ -184,7 +292,7 @@ def _tag(framework_path: Path, source_meta: str, text: str) -> dict:
 
 
 def build_article(existing_fm: dict, body: str, raw_content: str,
-                  framework_path: Path, source_meta: str):
+                  framework_path: Path, source_meta: str, enrich_cfg: dict):
     """Produce ``(article_md, frontmatter)`` for a source.
 
     Authored MD (leading frontmatter present) is preserved verbatim and the
@@ -195,13 +303,14 @@ def build_article(existing_fm: dict, body: str, raw_content: str,
     if existing_fm:
         if has_required_fm(existing_fm):
             return body, dict(existing_fm)
-        tagger_fm = _tag(framework_path, source_meta, body)
+        tagger_fm = _tag(framework_path, source_meta, body, enrich_cfg)
         return body, {**tagger_fm, **existing_fm}
 
     wiki_prompt = load_agent_prompt(framework_path, "wikipedia-style")
-    article_md = call_claude(wiki_prompt, f"{source_meta}\n\n---\n\n{raw_content[:12000]}",
-                             label="wikipedia-style")
-    return article_md, _tag(framework_path, source_meta, article_md)
+    article_md = enrich_call("rewrite", wiki_prompt,
+                             f"{source_meta}\n\n---\n\n{raw_content[:12000]}",
+                             enrich_cfg, label="wikipedia-style")
+    return article_md, _tag(framework_path, source_meta, article_md, enrich_cfg)
 
 
 def domain_index_path(docs_root: Path, frontmatter: dict, domain_map: dict):
@@ -215,13 +324,14 @@ def domain_index_path(docs_root: Path, frontmatter: dict, domain_map: dict):
     return None
 
 
-def merge_into_domain(framework_path: Path, existing_body: str, new_body: str, source_meta: str) -> str:
+def merge_into_domain(framework_path: Path, existing_body: str, new_body: str,
+                      source_meta: str, enrich_cfg: dict) -> str:
     prompt = load_agent_prompt(framework_path, "domain-merge")
     user_input = (
         f"{source_meta}\n\n=== EXISTING ARTICLE ===\n\n{existing_body}\n\n"
         f"=== NEW MATERIAL ===\n\n{new_body[:8000]}"
     )
-    return call_claude(prompt, user_input, label="domain-merge")
+    return enrich_call("merge", prompt, user_input, enrich_cfg, label="domain-merge")
 
 
 def merge_frontmatter(existing_fm: dict, new_fm: dict, source_file: str) -> dict:
@@ -278,13 +388,15 @@ def upsert_glossary(glossary_text: str, new_entries_md: str) -> str:
     return pre + "\n\n---\n\n" + body
 
 
-def enrich_glossary(paths: dict, framework_path: Path, article_md: str, source_meta: str, enrich_log: Path):
+def enrich_glossary(paths: dict, framework_path: Path, article_md: str, source_meta: str,
+                    enrich_log: Path, enrich_cfg: dict):
     glossary = paths["docs"] / "glossary.md"
     if not glossary.exists():
         glossary.parent.mkdir(parents=True, exist_ok=True)
         glossary.write_text("---\ntitle: Glossary\n---\n\n# Glossary\n\n", encoding="utf-8")
     prompt = load_agent_prompt(framework_path, "term-enricher")
-    entries = call_claude(prompt, f"{source_meta}\n\n---\n\n{article_md[:8000]}", label="glossary")
+    entries = enrich_call("glossary", prompt, f"{source_meta}\n\n---\n\n{article_md[:8000]}",
+                          enrich_cfg, label="glossary")
     if "###" not in entries:
         return
     merged = upsert_glossary(glossary.read_text(encoding="utf-8"), entries)
@@ -385,6 +497,7 @@ def ingest_source(src_path: Path, paths: dict, framework_path: Path, kb_config: 
     ingest_log  = paths["logs"] / "ingestion.log"
     enrich_log  = paths["logs"] / "enrichment.log"
     source_name = src_path.stem.lower().replace(" ", "-")
+    enrich_cfg  = resolve_enrich(kb_config)
 
     log(ingest_log, "INFO", f"START {src_path.name}")
 
@@ -407,7 +520,7 @@ def ingest_source(src_path: Path, paths: dict, framework_path: Path, kb_config: 
             log(enrich_log, "WARN", f"MALFORMED_FM {src_path.name}: leading block ignored, treated as raw")
         if existing_fm and not body:
             log(enrich_log, "WARN", f"EMPTY_BODY {src_path.name}: authored frontmatter with no body")
-        article_md, frontmatter = build_article(existing_fm, body, raw_content, framework_path, source_meta)
+        article_md, frontmatter = build_article(existing_fm, body, raw_content, framework_path, source_meta, enrich_cfg)
         log(enrich_log, "INFO",
             f"{'PRESERVED' if existing_fm else 'STYLE_APPLIED'} {src_path.name}")
 
@@ -422,12 +535,12 @@ def ingest_source(src_path: Path, paths: dict, framework_path: Path, kb_config: 
         if target_index is not None and target_index.exists():
             # Mergeable type with an existing canonical page → grow that page.
             existing_fm, existing_body = split_frontmatter(target_index.read_text(encoding="utf-8"))
-            merged_body = merge_into_domain(framework_path, existing_body, article_md, source_meta)
+            merged_body = merge_into_domain(framework_path, existing_body, article_md, source_meta, enrich_cfg)
             merged_fm   = merge_frontmatter(existing_fm, frontmatter, src_path.name)
             fm_block      = "---\n" + yaml.dump(merged_fm, allow_unicode=True, sort_keys=False) + "---\n\n"
             final_content = fm_block + merged_body
             out_path      = target_index
-            log(enrich_log, "INFO", f"MERGED {pdf_path.name} → {out_path.name}")
+            log(enrich_log, "INFO", f"MERGED {src_path.name} → {out_path.name}")
         else:
             # New domain page, or a standalone type (report/term) → write fresh.
             fm_block      = "---\n" + yaml.dump(frontmatter, allow_unicode=True, sort_keys=False) + "---\n\n"
@@ -442,7 +555,7 @@ def ingest_source(src_path: Path, paths: dict, framework_path: Path, kb_config: 
 
         # 5b. Enrich the shared glossary (Layer 2)
         try:
-            enrich_glossary(paths, framework_path, article_md, source_meta, enrich_log)
+            enrich_glossary(paths, framework_path, article_md, source_meta, enrich_log, enrich_cfg)
         except Exception as e:
             log(enrich_log, "WARN", f"GLOSSARY_SKIP {src_path.name}: {e}")
 

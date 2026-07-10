@@ -90,7 +90,8 @@ def test_build_article_authored_complete_skips_claude(monkeypatch):
     monkeypatch.setattr(ingest, "call_claude", _no_claude)
     existing = {"content_type": "report", "domain": ["ESRS"], "status": "draft", "title": "T"}
     body = "# Authored\n\nProse kept verbatim.\n"
-    article_md, fm = ingest.build_article(existing, body, "ignored-raw", Path("/fw"), "meta")
+    article_md, fm = ingest.build_article(existing, body, "ignored-raw", Path("/fw"), "meta",
+                                           ingest.resolve_enrich({}))
     assert article_md == body                 # preserved verbatim, no rewrite
     assert fm == existing                      # author frontmatter untouched
 
@@ -105,7 +106,8 @@ def test_build_article_authored_gapfill_author_wins(monkeypatch):
     monkeypatch.setattr(ingest, "load_agent_prompt", lambda fw, name: name)
     monkeypatch.setattr(ingest, "call_claude", fake_claude)
     existing = {"content_type": "report", "title": "Author Title"}   # missing domain + status
-    article_md, fm = ingest.build_article(existing, "Body.", "raw", Path("/fw"), "meta")
+    article_md, fm = ingest.build_article(existing, "Body.", "raw", Path("/fw"), "meta",
+                                           ingest.resolve_enrich({}))
     assert calls == ["tagger"]                 # only the tagger ran, no rewrite
     assert article_md == "Body."
     assert fm["content_type"] == "report"      # author wins on conflict
@@ -126,7 +128,8 @@ def test_build_article_raw_rewrites_and_tags(monkeypatch):
 
     monkeypatch.setattr(ingest, "load_agent_prompt", lambda fw, name: name)
     monkeypatch.setattr(ingest, "call_claude", fake_claude)
-    article_md, fm = ingest.build_article({}, "raw body", "raw body", Path("/fw"), "meta")
+    article_md, fm = ingest.build_article({}, "raw body", "raw body", Path("/fw"), "meta",
+                                           ingest.resolve_enrich({}))
     assert calls == ["wikipedia-style", "tagger"]
     assert article_md == "Rewritten encyclopaedic body."
     assert fm["content_type"] == "report"
