@@ -92,9 +92,11 @@ rewrite) and the tagger only fills missing required fields (`content_type`,
 *without* frontmatter, are treated as raw and go through the full rewrite + tag path.
 
 On success the pipeline:
-1. Extracts content (PDF → `marker-pdf`/`pypdf`; MD → read verbatim)
-2. For raw sources, calls Claude to rewrite the content in Wikipedia style
-3. Generates YAML frontmatter via Claude (raw), or fills gaps in authored frontmatter
+1. Extracts content (PDF → `marker-pdf`/`pypdf`; MD → read verbatim), then guards
+   readability — a PDF that extracts to near-empty text or high-volume mojibake
+   (broken font map) fails loud to `pipeline/failed/` rather than being hallucinated over
+2. For raw sources, rewrites the content in Wikipedia style
+3. Generates YAML frontmatter (raw), or fills gaps in authored frontmatter
 4. Writes the enriched Markdown to `docs/` in the knowledge base
 5. Merges new facts into the canonical domain `index.md` (not a parallel page)
 6. Upserts extracted terms into `glossary.md`, kept in alphabetical order (case-insensitive)
@@ -103,6 +105,27 @@ On success the pipeline:
 9. Moves the source to `pipeline/processed/`
 
 Failed sources move to `pipeline/failed/` with a log entry in `logs/ingestion.log`.
+
+#### Enrichment backends
+
+Each enrichment step (tagger, rewrite, merge, glossary) is routed to a backend by
+the KB's `config/kb.yaml` `enrich:` block — either the Claude API or a local
+[Ollama](https://ollama.com) model (free). With no block, all four default to
+Claude, so behaviour is unchanged unless a KB opts in. A step routed to Ollama
+fails loud if the daemon is unreachable or the model is missing (no silent fallback
+to paid Claude calls). Example:
+
+```yaml
+enrich:
+  backends:
+    claude: { model: claude-sonnet-4-6 }
+    ollama: { model: qwen3:8b, host: http://localhost:11434, num_ctx: 8192 }
+  tasks:
+    tagger:   ollama
+    rewrite:  ollama
+    merge:    claude     # merge-not-overwrite is the risky step — keep it strong
+    glossary: ollama
+```
 
 ### Rebuilding the site
 
