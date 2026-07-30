@@ -162,6 +162,38 @@ def check_missing_xrefs(articles: list[dict], ignore: set[str]) -> list[Finding]
     return findings
 
 
+def _norm_term(h: str) -> str:
+    """Collapse a term heading to its concept key: drop the parenthetical
+    qualifier/abbreviation, punctuation, a trailing plural 's', and case."""
+    h = re.sub(r"\s*\([^)]*\)", "", h)
+    h = re.sub(r"[^\w\s]", "", h).strip().lower()
+    h = re.sub(r"s\b", "", h)
+    return re.sub(r"\s+", " ", h)
+
+
+def check_glossary_hygiene(articles: list[dict]) -> list[Finding]:
+    """Guard the glossary against the two regressions #18 cleaned up: near-duplicate
+    term entries (short-form vs ``Term (ABBREV)``/plural) and trailing whitespace
+    (which splits ``Domain:`` buckets and runs compact fields together)."""
+    gloss = next((a for a in articles if a["rel_path"].as_posix() == "glossary.md"), None)
+    if not gloss:
+        return []
+    findings: list[Finding] = []
+    groups: dict[str, list[str]] = {}
+    for term in _glossary_terms(articles):
+        groups.setdefault(_norm_term(term), []).append(term)
+    for variants in groups.values():
+        if len(variants) > 1:
+            findings.append(("GLOSSDUP", "glossary.md",
+                             f"near-duplicate terms: {', '.join(variants)}"))
+    for i, line in enumerate(gloss["text"].split("\n"), 1):
+        if line != line.rstrip():
+            findings.append(("GLOSSFMT", "glossary.md",
+                             f"trailing whitespace (first at line {i})"))
+            break
+    return findings
+
+
 def run_deterministic(kb_root: Path, config: dict) -> tuple[list[Finding], bool]:
     lint_cfg = (config or {}).get("lint", {}) or {}
     hard_kinds = set(lint_cfg.get("hard_fail", DEFAULT_HARD_FAIL))
@@ -174,6 +206,7 @@ def run_deterministic(kb_root: Path, config: dict) -> tuple[list[Finding], bool]
     findings += check_dangling_sources(articles)
     findings += check_stale(articles)
     findings += check_missing_xrefs(articles, ignore)
+    findings += check_glossary_hygiene(articles)
 
     lines = [f"{k}\t{p}\t{d}" for k, p, d in findings]
     log_dir = kb_root / "logs"
