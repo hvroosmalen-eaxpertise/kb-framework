@@ -18,6 +18,7 @@ import anthropic
 import yaml
 
 import usage
+import mkdocs_yaml
 
 
 def slugify(text: str) -> str:
@@ -218,7 +219,7 @@ def _update_insights_nav(mkdocs_yml: Path, generated: list[tuple[str, str]]):
     """Ensure an 'Insights' nav section lists the overview plus generated pages."""
     if not mkdocs_yml.exists() or not generated:
         return
-    config = yaml.safe_load(mkdocs_yml.read_text(encoding="utf-8"))
+    config = mkdocs_yaml.load(mkdocs_yml)
     nav = config.get("nav", [])
 
     insights = next((i for i in nav if isinstance(i, dict) and "Insights" in i), None)
@@ -239,10 +240,7 @@ def _update_insights_nav(mkdocs_yml: Path, generated: list[tuple[str, str]]):
     insights["Insights"] = items
 
     config["nav"] = nav
-    mkdocs_yml.write_text(
-        yaml.dump(config, allow_unicode=True, sort_keys=False, default_flow_style=False),
-        encoding="utf-8",
-    )
+    mkdocs_yml.write_text(mkdocs_yaml.dump(config), encoding="utf-8")
 
 
 def main():

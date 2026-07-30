@@ -25,6 +25,7 @@ import yaml
 from dotenv import load_dotenv
 
 import usage
+import mkdocs_yaml
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
 
@@ -429,7 +430,7 @@ def enrich_glossary(paths: dict, framework_path: Path, article_md: str, source_m
 
 def _update_nav(mkdocs_yml: Path, out_path: Path, docs_root: Path, title: str, frontmatter: dict):
     """Insert a newly ingested page into the mkdocs.yml nav under the correct section."""
-    config = yaml.safe_load(mkdocs_yml.read_text(encoding="utf-8"))
+    config = mkdocs_yaml.load(mkdocs_yml)
     nav = config.get("nav", [])
     rel = str(out_path.relative_to(docs_root)).replace("\\", "/")
 
@@ -467,10 +468,7 @@ def _update_nav(mkdocs_yml: Path, out_path: Path, docs_root: Path, title: str, f
 
     year_list.append({title: rel})
     config["nav"] = nav
-    mkdocs_yml.write_text(
-        yaml.dump(config, allow_unicode=True, sort_keys=False, default_flow_style=False),
-        encoding="utf-8",
-    )
+    mkdocs_yml.write_text(mkdocs_yaml.dump(config), encoding="utf-8")
 
 
 # ── Changelog ─────────────────────────────────────────────────────────────────

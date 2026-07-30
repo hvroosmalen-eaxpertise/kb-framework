@@ -20,12 +20,13 @@ import yaml
 from dotenv import load_dotenv
 
 import usage
+import mkdocs_yaml
 from ingest import resolve_paths, log
 
 
 def parse_nav(mkdocs_yml: Path) -> list:
     """[(label, rel_path)] for every page in the nav; label is the nearest dict key."""
-    cfg = yaml.safe_load(mkdocs_yml.read_text(encoding="utf-8")) or {}
+    cfg = mkdocs_yaml.load(mkdocs_yml)
     pairs = []
 
     def walk(node, label=None):
