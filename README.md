@@ -113,13 +113,17 @@ the KB's `config/kb.yaml` `enrich:` block — either the Claude API or a local
 [Ollama](https://ollama.com) model (free). With no block, all four default to
 Claude, so behaviour is unchanged unless a KB opts in. A step routed to Ollama
 fails loud if the daemon is unreachable or the model is missing (no silent fallback
-to paid Claude calls). Example:
+to paid Claude calls).
+
+The Ollama backend supports an optional `timeout` key (seconds, default 1200) for
+slow hardware or large sources. PDFs exceeding 500K extracted characters trigger a
+`LARGE_SOURCE` warning at ingestion time. Example:
 
 ```yaml
 enrich:
   backends:
     claude: { model: claude-sonnet-4-6 }
-    ollama: { model: qwen3:8b, host: http://localhost:11434, num_ctx: 8192 }
+    ollama: { model: qwen3:8b, host: http://localhost:11434, num_ctx: 8192, timeout: 1200 }
   tasks:
     tagger:   ollama
     rewrite:  ollama

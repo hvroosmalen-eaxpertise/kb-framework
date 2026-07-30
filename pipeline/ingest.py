@@ -171,11 +171,16 @@ def _strip_think(text: str) -> str:
 
 def call_ollama(system_prompt: str, user_content: str, model: str,
                 host: str = "http://localhost:11434", num_ctx: int = 8192,
-                temperature: float = 0.1, label: str = "") -> str:
+                temperature: float = 0.1, timeout: int = 1200,
+                label: str = "") -> str:
     """Local enrichment via Ollama's /api/chat. Fails loud (no silent fallback).
 
     Guards against silent context truncation: if the prompt alone would fill most
     of ``num_ctx``, we raise rather than let Ollama quietly drop the overflow.
+
+    ``timeout`` is the HTTP request timeout in seconds (default 1200 = 20 min).
+    Large PDFs or slow hardware may need it raised; set per-KB in the
+    ``enrich.backends.ollama.timeout`` config key.
     """
     import urllib.request
     import urllib.error
@@ -203,7 +208,7 @@ def call_ollama(system_prompt: str, user_content: str, model: str,
         headers={"Content-Type": "application/json"},
     )
     try:
-        with urllib.request.urlopen(req, timeout=600) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             body = json.loads(resp.read())
     except urllib.error.HTTPError as e:
         detail = e.read().decode("utf-8", "replace")
@@ -238,6 +243,7 @@ def enrich_call(task: str, system_prompt: str, user_content: str,
                            host=backend.get("host", "http://localhost:11434"),
                            num_ctx=backend.get("num_ctx", 8192),
                            temperature=backend.get("temperature", 0.1),
+                           timeout=backend.get("timeout", 1200),
                            label=label or task)
     raise RuntimeError(
         f"enrich task '{task}' → unsupported backend type '{backend_name}'")
@@ -522,7 +528,12 @@ def ingest_source(src_path: Path, paths: dict, framework_path: Path, kb_config: 
     try:
         # 1. Extract raw content (PDF → marker/pypdf; MD → verbatim)
         raw_content = extract_content(src_path)
-        log(ingest_log, "INFO", f"EXTRACTED {len(raw_content)} chars from {src_path.name}")
+        size_k = len(raw_content) // 1000
+        log(ingest_log, "INFO", f"EXTRACTED {size_k}K chars from {src_path.name}")
+        if size_k > 500:
+            log(enrich_log, "WARN",
+                f"LARGE_SOURCE {src_path.name}: {size_k}K chars — enrichment may be slow; "
+                f"consider splitting the source or raising enrich.backends.ollama.timeout")
 
         # 1b. Refuse to enrich unreadable extraction. PDFs with a broken font map
         # yield high-volume mojibake that an LLM will faithfully hallucinate over;
