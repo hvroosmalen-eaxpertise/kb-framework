@@ -79,7 +79,8 @@ def _bootstrap_one(pdf, paths, framework_path, kb_config,
     raw = extract_markdown(pdf)
     source_meta = (f"Source file: {pdf.name}\n"
                    f"Source body: {kb_config.get('default_source_body', 'Unknown')}\n"
-                   f"Date: {datetime.date.today().isoformat()}")
+                   f"Ingest date: {datetime.date.today().isoformat()} (repository "
+                   f"metadata, not the source's publication date)")
     article = call_claude(load_agent_prompt(framework_path, "wikipedia-style"),
                           f"{source_meta}\n\n---\n\n{raw[:12000]}", label="wikipedia-style")
 

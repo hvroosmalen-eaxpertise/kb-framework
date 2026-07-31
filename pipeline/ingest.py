@@ -551,7 +551,8 @@ def ingest_source(src_path: Path, paths: dict, framework_path: Path, kb_config: 
         source_meta = (
             f"Source file: {src_path.name}\n"
             f"Source body: {kb_config.get('default_source_body', 'Unknown')}\n"
-            f"Date: {datetime.date.today().isoformat()}"
+            f"Ingest date: {datetime.date.today().isoformat()} (repository metadata, "
+            f"not the source's publication date)"
         )
 
         # 2-3. Authored MD (has frontmatter) is preserved; raw content is

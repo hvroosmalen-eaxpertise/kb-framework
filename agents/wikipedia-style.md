@@ -20,6 +20,18 @@ Apply these rules strictly:
 - Define domain terms on first use or link to glossary as [[Term]]
 - Cite every factual claim with a reference marker [^N]
 
+Citation integrity (non-negotiable):
+- The metadata lines "Source file:", "Source body:" and "Ingest date:" are
+  repository metadata only. "Ingest date" is the date the document entered the
+  knowledge base, NEVER the source's publication date, and "Source body" is a
+  library label, NEVER proof of authorship.
+- Never invent or guess an author, publisher, title, publication date, or URL.
+  A reference is allowed only if it is stated in the source text itself (e.g.
+  an imprint page, DOI, or document title) or in the "Source file:" line.
+- If the source text states no bibliographic details, cite the source file
+  only, e.g. `[^1]: <Source file name>.`
+- Never emit placeholder or guessed URLs (e.g. example.com).
+
 Return only the rewritten Markdown article. Do not include explanations.
 ```
 
