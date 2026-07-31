@@ -83,7 +83,8 @@ python pipeline/ingest.py --kb <path-to-kb>             # all .pdf/.md in inbox/
 python pipeline/ingest.py --kb <path-to-kb> --file <source>  # one .pdf or .md
 ```
 
-Requires `ANTHROPIC_API_KEY` in the KB root `.env` file.
+Requires `ANTHROPIC_API_KEY` in the KB root `.env` file **only if** any `enrich:`
+task is routed to the `claude` backend — an all-Ollama KB needs no key.
 
 Sources can be PDFs or Markdown. **Markdown with its own leading frontmatter is
 treated as authored content**: the body is preserved verbatim (no Wikipedia-style
@@ -108,28 +109,48 @@ Failed sources move to `pipeline/failed/` with a log entry in `logs/ingestion.lo
 
 #### Enrichment backends
 
-Each enrichment step (tagger, rewrite, merge, glossary) is routed to a backend by
-the KB's `config/kb.yaml` `enrich:` block — either the Claude API or a local
-[Ollama](https://ollama.com) model (free). With no block, all four default to
-Claude, so behaviour is unchanged unless a KB opts in. A step routed to Ollama
-fails loud if the daemon is unreachable or the model is missing (no silent fallback
-to paid Claude calls).
+Each enrichment step is routed to a backend by the KB's `config/kb.yaml`
+`enrich:` block — either the Claude API or a local [Ollama](https://ollama.com)
+model (free). Routed tasks: the four ingest steps (tagger, rewrite, merge,
+glossary) **plus** the whole-corpus generators (`model` — semantic-model /
+concept-map / ontology in `query.py`; `synthesis` — cross-domain insight pages;
+`lint` — the `--deep` contradiction check). With no block, all tasks default to
+Claude, so behaviour is unchanged unless a KB opts in. A task routed to Ollama
+fails loud if the daemon is unreachable or the model is missing (no silent
+fallback to paid Claude calls).
 
-The Ollama backend supports an optional `timeout` key (seconds, default 1200) for
-slow hardware or large sources. PDFs exceeding 500K extracted characters trigger a
-`LARGE_SOURCE` warning at ingestion time. Example:
+**Backend dispatch is by *type*, not exact name** — `type` is taken from an
+explicit `type:` key, else the backend name prefix (`claude*` / `ollama*`).
+A KB can therefore define several backends of the same kind, e.g. `ollama` for
+per-source ingest (small context) and `ollama-xl` for whole-corpus generators
+(larger `num_ctx`):
 
 ```yaml
 enrich:
   backends:
-    claude: { model: claude-sonnet-4-6 }
-    ollama: { model: qwen3:8b, host: http://localhost:11434, num_ctx: 8192, timeout: 1200 }
+    claude:    { model: claude-sonnet-4-6 }
+    ollama:    { model: qwen3:8b, host: http://localhost:11434, num_ctx: 8192,  timeout: 1200 }
+    ollama-xl: { model: qwen3:8b, host: http://localhost:11434, num_ctx: 32768, timeout: 1800 }
   tasks:
-    tagger:   ollama
-    rewrite:  ollama
-    merge:    claude     # merge-not-overwrite is the risky step — keep it strong
-    glossary: ollama
+    tagger:    ollama
+    rewrite:   ollama
+    merge:     ollama-xl   # merge-not-overwrite; needs the larger context
+    glossary:  ollama
+    model:     ollama-xl   # query.py generators
+    synthesis: ollama-xl
+    lint:      ollama-xl   # lint.py --deep
 ```
+
+**Wikilink sanitization**: generated pages (models, synthesis) pass through a
+sanitizer that demotes any `[[wikilink]]` the model invented that would not
+resolve at build time (using the KB's own `hooks.py` index: titles, glossary
+terms, slugs, aliases, known-external) — essential now that local models, which
+invent links more freely than Claude, can drive generation. A `--strict` build
+still passes.
+
+The Ollama backend supports an optional `timeout` key (seconds, default 1200)
+for slow hardware or large sources. PDFs exceeding 500K extracted characters
+trigger a `LARGE_SOURCE` warning at ingestion time.
 
 ### Rebuilding the site
 

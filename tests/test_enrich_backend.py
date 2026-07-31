@@ -74,6 +74,40 @@ def test_enrich_call_unknown_backend_raises():
         ingest.enrich_call("tagger", "s", "u", cfg)
 
 
+# ── backend *type* dispatch: same-kind backends under different names ─────────
+
+def test_enrich_call_routes_by_type_prefix_not_exact_name(monkeypatch):
+    """`ollama-xl` (no explicit type:) is an ollama backend; dispatch must be by
+    prefix, or a second backend of the same kind would be rejected."""
+    cfg = ingest.resolve_enrich({"enrich": {
+        "backends": {"ollama-xl": {"model": "qwen3:8b", "num_ctx": 32768}},
+        "tasks": {"synthesis": "ollama-xl"},
+    }})
+    seen = {}
+    monkeypatch.setattr(ingest, "call_ollama",
+                        lambda s, u, model, **k: seen.update(
+                            model=model, num_ctx=k.get("num_ctx")) or "XL")
+    monkeypatch.setattr(ingest, "call_claude",
+                        lambda *a, **k: pytest.fail("ollama-xl must not hit claude"))
+    out = ingest.enrich_call("synthesis", "sys", "usr", cfg)
+    assert out == "XL"
+    assert seen["model"] == "qwen3:8b"
+    assert seen["num_ctx"] == 32768
+
+
+def test_enrich_call_explicit_type_key_overrides_name(monkeypatch):
+    cfg = ingest.resolve_enrich({"enrich": {
+        "backends": {"weird-name": {"type": "ollama", "model": "qwen3:8b"}},
+        "tasks": {"tagger": "weird-name"},
+    }})
+    seen = {}
+    monkeypatch.setattr(ingest, "call_ollama",
+                        lambda s, u, model, **k: seen.update(model=model) or "OK")
+    out = ingest.enrich_call("tagger", "sys", "usr", cfg)
+    assert out == "OK"
+    assert seen["model"] == "qwen3:8b"
+
+
 # ── call_ollama: payload shape, think-stripping, fail-loud, ctx guard ─────────
 
 class _FakeResp(io.BytesIO):

@@ -233,11 +233,15 @@ def enrich_call(task: str, system_prompt: str, user_content: str,
     backend = enrich_cfg["backends"].get(backend_name)
     if backend is None:
         raise RuntimeError(f"enrich task '{task}' → unknown backend '{backend_name}'")
-    if backend_name == "claude":
+    # Dispatch by backend *type*, not exact name, so a KB can define several
+    # backends of the same kind (e.g. `ollama` and `ollama-xl`). Type comes from
+    # an explicit `type:` key, else the name prefix (`claude`/`ollama`).
+    btype = str(backend.get("type") or backend_name).lower()
+    if btype.startswith("claude"):
         return call_claude(system_prompt, user_content,
                            model=backend.get("model", "claude-sonnet-4-6"),
                            label=label or task)
-    if backend_name == "ollama":
+    if btype.startswith("ollama"):
         return call_ollama(system_prompt, user_content,
                            model=backend["model"],
                            host=backend.get("host", "http://localhost:11434"),
@@ -246,7 +250,7 @@ def enrich_call(task: str, system_prompt: str, user_content: str,
                            timeout=backend.get("timeout", 1200),
                            label=label or task)
     raise RuntimeError(
-        f"enrich task '{task}' → unsupported backend type '{backend_name}'")
+        f"enrich task '{task}' → unsupported backend type '{btype}' (backend '{backend_name}')")
 
 def determine_output_path(docs_root: Path, frontmatter: dict, source_name: str) -> Path:
     content_type = frontmatter.get("content_type", "report")

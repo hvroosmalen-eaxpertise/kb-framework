@@ -11,6 +11,7 @@ import re
 from pathlib import Path
 
 from query import load_articles, call_claude, load_agent_prompt, _strip_frontmatter
+from ingest import resolve_enrich, enrich_call
 
 Finding = tuple[str, str, str]  # (kind, path, detail)
 
@@ -236,7 +237,7 @@ def run_deep(kb_root: Path, config: dict) -> list[Finding]:
     blocks = "\n\n---\n\n".join(
         f"# PAGE: {a['rel_path'].as_posix()}\n{_strip_frontmatter(a['text'])[:4000]}"
         for a in canon)
-    reply = call_claude(prompt, blocks)
+    reply = enrich_call("lint", prompt, blocks, resolve_enrich(config or {}), label="lint")
 
     findings: list[Finding] = []
     for m in CONTRA_RE.finditer(reply):

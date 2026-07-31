@@ -19,6 +19,52 @@ import yaml
 
 import usage
 import mkdocs_yaml
+from ingest import resolve_enrich, enrich_call
+
+
+def _enrich(kb_root: Path) -> dict:
+    """Resolve the KB's enrichment backend config (Claude/Ollama per task)."""
+    cfg_file = kb_root / "config" / "kb.yaml"
+    kb_cfg = yaml.safe_load(cfg_file.read_text(encoding="utf-8")) if cfg_file.exists() else {}
+    return resolve_enrich(kb_cfg or {})
+
+
+def _link_resolver(kb_root: Path):
+    """Load the KB's hooks.py wikilink index (titles + glossary + slugs + aliases +
+    known-external). Used to strip [[links]] a generator invented that would not
+    resolve under `mkdocs build --strict` — backend-agnostic, but essential now
+    that local models (which invent links more freely) can drive generation."""
+    hooks_path = kb_root / "hooks.py"
+    if not hooks_path.exists():
+        return None
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("_kb_hooks", hooks_path)
+    hooks = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(hooks)
+    docs_dir = str(kb_root / "docs")
+    index: dict = {}
+    for key, target in getattr(hooks, "MANUAL_ALIASES", {}).items():
+        hooks._register(index, key, target)
+    hooks._index_titles(index, docs_dir)
+    hooks._index_glossary(index, docs_dir)
+    hooks._index_slugs(index, docs_dir)
+    return hooks, index, hooks._load_known_external(docs_dir)
+
+
+def _sanitize_links(text: str, resolver) -> str:
+    """Demote any [[wikilink]] that would not resolve at build time to plain text,
+    keeping the ones that do. No-op if the KB ships no hooks.py."""
+    if not resolver:
+        return text
+    hooks, index, external = resolver
+
+    def repl(m):
+        key = m.group(1).strip().rstrip("\\")
+        display = (m.group(2) or key).strip()
+        nk = hooks._norm(key)
+        return m.group(0) if (nk in index or nk in external) else display
+
+    return hooks.WIKILINK_RE.sub(repl, text)
 
 
 def slugify(text: str) -> str:
@@ -105,7 +151,8 @@ def build_model(kb_root: Path, framework_path: Path, model_type: str):
         f"Article content:\n{combined}"
     )
 
-    result = call_claude(prompt, user_input, label=f"model:{model_type}")
+    result = enrich_call("model", prompt, user_input, _enrich(kb_root), label=f"model:{model_type}")
+    result = _sanitize_links(result, _link_resolver(kb_root))
 
     out_path = kb_root / "docs" / "models" / f"{model_type}.md"
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -169,6 +216,7 @@ def build_synthesis(kb_root: Path, framework_path: Path, only_domains: set[str] 
     glossary_text = _strip_frontmatter(glossary.read_text(encoding="utf-8")) if glossary.exists() else ""
 
     generated = []
+    resolver = _link_resolver(kb_root)
     for topic in topics:
         title = topic["title"]
         sources = topic.get("sources", [])
@@ -197,7 +245,8 @@ def build_synthesis(kb_root: Path, framework_path: Path, only_domains: set[str] 
             f"=== SOURCE ARTICLES ===\n\n" + "\n\n---\n\n".join(source_blocks) +
             f"\n\n=== GLOSSARY ===\n\n{glossary_text[:6000]}"
         )
-        body = call_claude(prompt, user_input, label="synthesis")
+        body = enrich_call("synthesis", prompt, user_input, _enrich(kb_root), label="synthesis")
+        body = _sanitize_links(body, resolver)
 
         slug = slugify(title)
         out_path = docs_path / "insights" / f"{slug}.md"

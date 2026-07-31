@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import ingest
 import lint
 
 
@@ -75,7 +76,7 @@ def test_run_deterministic_clean_kb_passes(tiny_kb: Path):
 
 def test_deep_parses_contradiction_lines(tiny_kb: Path, monkeypatch):
     monkeypatch.setattr(lint, "load_agent_prompt", lambda *a, **k: "PROMPT", raising=False)
-    monkeypatch.setattr(lint, "call_claude",
+    monkeypatch.setattr(ingest, "call_claude",
                         lambda *a, **k: "CONTRADICTION esrs vs tcfd: scope differs",
                         raising=False)
     findings = lint.run_deep(tiny_kb, {})
@@ -84,5 +85,5 @@ def test_deep_parses_contradiction_lines(tiny_kb: Path, monkeypatch):
 
 def test_deep_none_yields_no_findings(tiny_kb: Path, monkeypatch):
     monkeypatch.setattr(lint, "load_agent_prompt", lambda *a, **k: "PROMPT", raising=False)
-    monkeypatch.setattr(lint, "call_claude", lambda *a, **k: "NONE", raising=False)
+    monkeypatch.setattr(ingest, "call_claude", lambda *a, **k: "NONE", raising=False)
     assert lint.run_deep(tiny_kb, {}) == []
