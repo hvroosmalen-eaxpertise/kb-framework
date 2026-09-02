@@ -29,9 +29,8 @@
     });
   }
 
-  function addToolbarToRenderedDiagram(svgEl, source) {
-    var wrapper = svgEl.parentElement;
-    if (!wrapper || wrapper.classList.contains('mermaid-toolbar-added')) return;
+  function addToolbar(wrapper, source) {
+    if (wrapper.classList.contains('mermaid-toolbar-added')) return;
 
     var bar = document.createElement('div');
     bar.className = 'mermaid-toolbar';
@@ -60,41 +59,70 @@
 
     wrapper.parentNode.insertBefore(bar, wrapper);
     wrapper.classList.add('mermaid-toolbar-added');
-    enableDownloads(bar, svgEl);
+    var svgEl = wrapper.querySelector('svg');
+    if (svgEl) enableDownloads(bar, svgEl);
   }
 
-  // Wait for theme's mermaid to render, then add toolbar
-  function waitForRender(pre, source, attempts) {
+  function findAndAddToolbar(pre, source) {
+    // Case 1: pre was replaced by a div with mermaid class containing svg
+    var wrapper = pre.parentNode;
+    while (wrapper && wrapper !== document.body) {
+      if (wrapper.classList && wrapper.classList.contains('mermaid') && wrapper.querySelector('svg')) {
+        addToolbar(wrapper, source);
+        return true;
+      }
+      wrapper = wrapper.parentNode;
+    }
+
+    // Case 2: pre has a next sibling that is the rendered mermaid div
+    var next = pre.nextElementSibling;
+    while (next) {
+      if (next.classList && next.classList.contains('mermaid') && next.querySelector('svg')) {
+        addToolbar(next, source);
+        return true;
+      }
+      if (next.tagName && next.tagName.match(/svg/i)) {
+        // SVG directly
+        var parentDiv = document.createElement('div');
+        parentDiv.className = 'mermaid';
+        next.parentNode.insertBefore(parentDiv, next);
+        parentDiv.appendChild(next);
+        addToolbar(parentDiv, source);
+        return true;
+      }
+      next = next.nextElementSibling;
+    }
+
+    // Case 3: pre was replaced entirely - look for mermaid div with our content
+    var allMermaids = document.querySelectorAll('.mermaid svg');
+    for (var i = 0; i < allMermaids.length; i++) {
+      var svg = allMermaids[i];
+      var mw = svg.parentElement;
+      while (mw && !mw.classList.contains('mermaid')) mw = mw.parentElement;
+      if (mw && !mw.classList.contains('mermaid-toolbar-added')) {
+        // Check if this mermaid is near where our pre was
+        addToolbar(mw, source);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function waitAndAdd(pre, source, attempts) {
     attempts = attempts || 0;
-    // Look for rendered SVG sibling
-    var svgEl = pre.nextElementSibling;
-    while (svgEl && !svgEl.tagName.match(/svg/i)) {
-      svgEl = svgEl.nextElementSibling;
-    }
-    if (svgEl && svgEl.tagName && svgEl.tagName.match(/svg/i)) {
-      addToolbarToRenderedDiagram(svgEl, source);
-      return;
-    }
-    // Also check if pre was replaced
-    var prevSvg = pre.previousElementSibling;
-    while (prevSvg && !prevSvg.tagName.match(/svg/i)) {
-      prevSvg = prevSvg.previousElementSibling;
-    }
-    if (prevSvg && prevSvg.tagName && prevSvg.tagName.match(/svg/i)) {
-      addToolbarToRenderedDiagram(prevSvg, source);
-      return;
-    }
-    if (attempts > 100) {
-      // Fallback: if mermaid didn't render, try to render ourselves
+    if (findAndAddToolbar(pre, source)) return;
+
+    if (attempts > 150) {
+      // Fallback: render ourselves if theme didn't
       if (window.mermaid && pre.classList.contains('mermaid')) {
         try {
           window.mermaid.initialize({ startOnLoad: false });
           window.mermaid.render('mmd-' + Date.now(), source).then(function(r) {
             var wrapper = document.createElement('div');
+            wrapper.className = 'mermaid';
             wrapper.innerHTML = r.svg;
-            var svgEl2 = wrapper.firstElementChild;
             pre.parentNode.replaceChild(wrapper, pre);
-            addToolbarToRenderedDiagram(svgEl2, source);
+            addToolbar(wrapper, source);
           });
         } catch (err) {
           console.warn('mermaid-toolbar: fallback render error', err);
@@ -102,13 +130,13 @@
       }
       return;
     }
-    setTimeout(function() { waitForRender(pre, source, attempts + 1); }, 100);
+    setTimeout(function() { waitAndAdd(pre, source, attempts + 1); }, 100);
   }
 
   document.querySelectorAll('pre.mermaid').forEach(function(pre) {
     var code = pre.querySelector('code');
     if (!code || !/^\s*(graph|flowchart)\s+(TD|LR|BT|RL|TB)/.test(code.textContent)) return;
     var source = code.textContent;
-    waitForRender(pre, source);
+    waitAndAdd(pre, source);
   });
 })();
