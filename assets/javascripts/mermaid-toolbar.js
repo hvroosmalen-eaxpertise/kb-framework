@@ -31,7 +31,6 @@
 
   function addToolbar(wrapper, source) {
     if (wrapper.classList.contains('mermaid-toolbar-added')) return;
-    console.log('[mermaid-toolbar] Adding toolbar to', wrapper);
 
     var bar = document.createElement('div');
     bar.className = 'mermaid-toolbar';
@@ -80,23 +79,15 @@
   }
 
   function findWrapper(pre) {
-    // 1. Check if pre.parentNode is the mermaid wrapper
+    // 1. Check if pre was replaced - look at parent
     var p = pre.parentNode;
-    if (p && p.classList && p.classList.contains('mermaid') && p.querySelector('svg')) {
-      console.log('[mermaid-toolbar] Found wrapper: pre.parentNode');
-      return p;
-    }
+    if (p && p.classList && p.classList.contains('mermaid') && p.querySelector('svg')) return p;
 
-    // 2. Check next siblings
+    // 2. Check next siblings for rendered mermaid div
     var next = pre.nextElementSibling;
     while (next) {
-      if (next.classList && next.classList.contains('mermaid') && next.querySelector('svg')) {
-        console.log('[mermaid-toolbar] Found wrapper: nextElementSibling');
-        return next;
-      }
+      if (next.classList && next.classList.contains('mermaid') && next.querySelector('svg')) return next;
       if (next.tagName && next.tagName.match(/svg/i)) {
-        // Wrap the SVG
-        console.log('[mermaid-toolbar] Found SVG, wrapping');
         var div = document.createElement('div');
         div.className = 'mermaid';
         next.parentNode.insertBefore(div, next);
@@ -109,27 +100,19 @@
     // 3. Check previous siblings
     var prev = pre.previousElementSibling;
     while (prev) {
-      if (prev.classList && prev.classList.contains('mermaid') && prev.querySelector('svg')) {
-        console.log('[mermaid-toolbar] Found wrapper: previousElementSibling');
-        return prev;
-      }
+      if (prev.classList && prev.classList.contains('mermaid') && prev.querySelector('svg')) return prev;
       prev = prev.previousElementSibling;
     }
 
-    // 4. Look for mermaid div containing our pre's content
+    // 4. Find nearby unprocessed mermaid with svg
     var allMermaids = document.querySelectorAll('.mermaid');
     for (var i = 0; i < allMermaids.length; i++) {
       var m = allMermaids[i];
       if (m.querySelector('svg') && !m.classList.contains('mermaid-toolbar-added')) {
-        // Check if this mermaid is near our pre
         var dist = Math.abs(m.getBoundingClientRect().top - pre.getBoundingClientRect().top);
-        if (dist < 500) { // within 500px vertically
-          console.log('[mermaid-toolbar] Found wrapper: nearby mermaid div');
-          return m;
-        }
+        if (dist < 500) return m;
       }
     }
-
     return null;
   }
 
@@ -140,8 +123,8 @@
       addToolbar(wrapper, source);
       return;
     }
-    if (attempts > 200) { // 20 seconds
-      console.log('[mermaid-toolbar] Timeout waiting for render, attempting fallback');
+    if (attempts > 300) { // 30 seconds max
+      // Fallback: render ourselves
       if (window.mermaid && pre.classList.contains('mermaid')) {
         try {
           window.mermaid.initialize({ startOnLoad: false });
@@ -162,8 +145,9 @@
   }
 
   function init() {
-    console.log('[mermaid-toolbar] Init, found', document.querySelectorAll('pre.mermaid').length, 'mermaid blocks');
-    document.querySelectorAll('pre.mermaid').forEach(function(pre) {
+    var pres = document.querySelectorAll('pre.mermaid');
+    if (pres.length === 0) return;
+    pres.forEach(function(pre) {
       var code = pre.querySelector('code');
       if (!code || !/^\s*(graph|flowchart)\s+(TD|LR|BT|RL|TB)/.test(code.textContent)) return;
       var source = code.textContent;
@@ -171,9 +155,25 @@
     });
   }
 
+  // Try multiple times since theme mermaid renders asynchronously
+  var checkCount = 0;
+  function checkAndInit() {
+    checkCount++;
+    var pres = document.querySelectorAll('pre.mermaid');
+    var rendered = document.querySelectorAll('.mermaid svg').length;
+    if (pres.length > 0 && rendered > 0) {
+      init();
+    } else if (checkCount < 100) { // 10 seconds
+      setTimeout(checkAndInit, 100);
+    } else {
+      // Last resort - init anyway
+      init();
+    }
+  }
+
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
+    document.addEventListener('DOMContentLoaded', checkAndInit);
   } else {
-    init();
+    checkAndInit();
   }
 })();
