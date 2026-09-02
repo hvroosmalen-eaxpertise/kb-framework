@@ -29,50 +29,9 @@
     });
   }
 
-  function renderWithMermaid(mermaidLib, pre, bar, source) {
-    try {
-      mermaidLib.initialize({ startOnLoad: false });
-      mermaidLib.render('mmd-' + Date.now(), source).then(function(r) {
-        var wrapper = document.createElement('div');
-        wrapper.innerHTML = r.svg;
-        var svgEl = wrapper.firstElementChild;
-        if (pre.parentNode) {
-          pre.parentNode.replaceChild(wrapper, pre);
-        } else {
-          bar.parentNode.insertBefore(wrapper, bar);
-        }
-        enableDownloads(bar, svgEl);
-      });
-    } catch (err) {
-      console.warn('mermaid-toolbar: render error', err);
-    }
-  }
-
-  // Wait for mermaid to be available (from theme bundle)
-  function waitForMermaid(pre, bar, source, attempts) {
-    attempts = attempts || 0;
-    if (window.mermaid) {
-      renderWithMermaid(window.mermaid, pre, bar, source);
-      return;
-    }
-    if (attempts > 50) {
-      console.warn('mermaid-toolbar: mermaid not available after 5s');
-      return;
-    }
-    setTimeout(function() { waitForMermaid(pre, bar, source, attempts + 1); }, 100);
-  }
-
-  // Remove the mermaid class so the Material theme's auto-loader
-  // does NOT process these elements (which would create a duplicate).
-  // We will render them ourselves below using the theme's mermaid.
-  document.querySelectorAll('pre.mermaid').forEach(function(pre) {
-    pre.classList.remove('mermaid');
-  });
-
-  document.querySelectorAll('pre').forEach(function(pre) {
-    var code = pre.querySelector('code');
-    if (!code || !/^\s*(graph|flowchart)\s+(TD|LR|BT|RL|TB)/.test(code.textContent)) return;
-    var source = code.textContent;
+  function addToolbarToRenderedDiagram(svgEl, source) {
+    var wrapper = svgEl.parentElement;
+    if (!wrapper || wrapper.classList.contains('mermaid-toolbar-added')) return;
 
     var bar = document.createElement('div');
     bar.className = 'mermaid-toolbar';
@@ -95,13 +54,61 @@
       link.href = '#';
       link.textContent = pair[1];
       link.setAttribute('data-action', pair[0]);
-      link.style.cssText = 'font-size:0.8em;' + (idx === 0 ? 'margin-right:14px;' : '') + 'color:#888;cursor:default;';
+      link.style.cssText = 'font-size:0.8em;' + (idx === 0 ? 'margin-right:14px;' : '') + 'color:#888;cursor:pointer;';
       bar.appendChild(link);
     });
 
-    pre.parentNode.insertBefore(bar, pre.nextSibling);
+    wrapper.parentNode.insertBefore(bar, wrapper);
+    wrapper.classList.add('mermaid-toolbar-added');
+    enableDownloads(bar, svgEl);
+  }
 
-    // Wait for mermaid to be available from theme bundle, then render
-    waitForMermaid(pre, bar, source);
+  // Wait for theme's mermaid to render, then add toolbar
+  function waitForRender(pre, source, attempts) {
+    attempts = attempts || 0;
+    // Look for rendered SVG sibling
+    var svgEl = pre.nextElementSibling;
+    while (svgEl && !svgEl.tagName.match(/svg/i)) {
+      svgEl = svgEl.nextElementSibling;
+    }
+    if (svgEl && svgEl.tagName && svgEl.tagName.match(/svg/i)) {
+      addToolbarToRenderedDiagram(svgEl, source);
+      return;
+    }
+    // Also check if pre was replaced
+    var prevSvg = pre.previousElementSibling;
+    while (prevSvg && !prevSvg.tagName.match(/svg/i)) {
+      prevSvg = prevSvg.previousElementSibling;
+    }
+    if (prevSvg && prevSvg.tagName && prevSvg.tagName.match(/svg/i)) {
+      addToolbarToRenderedDiagram(prevSvg, source);
+      return;
+    }
+    if (attempts > 100) {
+      // Fallback: if mermaid didn't render, try to render ourselves
+      if (window.mermaid && pre.classList.contains('mermaid')) {
+        try {
+          window.mermaid.initialize({ startOnLoad: false });
+          window.mermaid.render('mmd-' + Date.now(), source).then(function(r) {
+            var wrapper = document.createElement('div');
+            wrapper.innerHTML = r.svg;
+            var svgEl2 = wrapper.firstElementChild;
+            pre.parentNode.replaceChild(wrapper, pre);
+            addToolbarToRenderedDiagram(svgEl2, source);
+          });
+        } catch (err) {
+          console.warn('mermaid-toolbar: fallback render error', err);
+        }
+      }
+      return;
+    }
+    setTimeout(function() { waitForRender(pre, source, attempts + 1); }, 100);
+  }
+
+  document.querySelectorAll('pre.mermaid').forEach(function(pre) {
+    var code = pre.querySelector('code');
+    if (!code || !/^\s*(graph|flowchart)\s+(TD|LR|BT|RL|TB)/.test(code.textContent)) return;
+    var source = code.textContent;
+    waitForRender(pre, source);
   });
 })();
