@@ -1,11 +1,6 @@
 (function() {
   'use strict';
 
-  var CDNS = [
-    'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js',
-    'https://unpkg.com/mermaid@11/dist/mermaid.min.js',
-  ];
-
   function svgUrl(svg) {
     var str = new XMLSerializer().serializeToString(svg.cloneNode(true));
     var blob = new Blob([str], {type: 'image/svg+xml'});
@@ -34,44 +29,49 @@
     });
   }
 
-  function renderSelf(pre, bar, source, cdnIndex) {
-    cdnIndex = cdnIndex || 0;
-    if (cdnIndex >= CDNS.length) return;
+  function renderWithMermaid(mermaidLib, pre, bar, source) {
+    try {
+      mermaidLib.initialize({ startOnLoad: false });
+      mermaidLib.render('mmd-' + Date.now(), source).then(function(r) {
+        var wrapper = document.createElement('div');
+        wrapper.innerHTML = r.svg;
+        var svgEl = wrapper.firstElementChild;
+        if (pre.parentNode) {
+          pre.parentNode.replaceChild(wrapper, pre);
+        } else {
+          bar.parentNode.insertBefore(wrapper, bar);
+        }
+        enableDownloads(bar, svgEl);
+      });
+    } catch (err) {
+      console.warn('mermaid-toolbar: render error', err);
+    }
+  }
 
-    var s = document.createElement('script');
-    s.src = CDNS[cdnIndex];
-    s.onload = function() {
-      try {
-        mermaid.initialize({ startOnLoad: false });
-        mermaid.render('mmd-' + Date.now(), source).then(function(r) {
-          var wrapper = document.createElement('div');
-          wrapper.innerHTML = r.svg;
-          var svgEl = wrapper.firstElementChild;
-          if (pre.parentNode) {
-            pre.parentNode.replaceChild(wrapper, pre);
-          } else {
-            bar.parentNode.insertBefore(wrapper, bar);
-          }
-          enableDownloads(bar, svgEl);
-        });
-      } catch (err) {
-        console.warn('mermaid-toolbar: render error', err);
-      }
-    };
-    s.onerror = function() { renderSelf(pre, bar, source, cdnIndex + 1); };
-    document.head.appendChild(s);
+  // Wait for mermaid to be available (from theme bundle)
+  function waitForMermaid(pre, bar, source, attempts) {
+    attempts = attempts || 0;
+    if (window.mermaid) {
+      renderWithMermaid(window.mermaid, pre, bar, source);
+      return;
+    }
+    if (attempts > 50) {
+      console.warn('mermaid-toolbar: mermaid not available after 5s');
+      return;
+    }
+    setTimeout(function() { waitForMermaid(pre, bar, source, attempts + 1); }, 100);
   }
 
   // Remove the mermaid class so the Material theme's auto-loader
   // does NOT process these elements (which would create a duplicate).
-  // We will render them ourselves below.
+  // We will render them ourselves below using the theme's mermaid.
   document.querySelectorAll('pre.mermaid').forEach(function(pre) {
     pre.classList.remove('mermaid');
   });
 
   document.querySelectorAll('pre').forEach(function(pre) {
     var code = pre.querySelector('code');
-    if (!code || !/^\s*graph\s+(TD|LR|BT|RL)/.test(code.textContent)) return;
+    if (!code || !/^\s*(graph|flowchart)\s+(TD|LR|BT|RL|TB)/.test(code.textContent)) return;
     var source = code.textContent;
 
     var bar = document.createElement('div');
@@ -101,7 +101,7 @@
 
     pre.parentNode.insertBefore(bar, pre.nextSibling);
 
-    // Render after a short delay so the page layout is settled
-    setTimeout(function() { renderSelf(pre, bar, source); }, 100);
+    // Wait for mermaid to be available from theme bundle, then render
+    waitForMermaid(pre, bar, source);
   });
 })();
