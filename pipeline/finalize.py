@@ -97,12 +97,12 @@ def reconcile_links(kb_root: Path) -> int:
 
 
 def _regenerate(kb_root: Path, framework_path: Path) -> None:
-    """Regenerate models (3), cross-ref, synthesis, catalog via query.py subprocesses."""
+    """Regenerate models (3), cross-ref, synthesis, catalog, sdg-summary via query.py."""
     query = framework_path / "pipeline" / "query.py"
     for model in ("semantic-model", "concept-map", "ontology"):
         subprocess.run([sys.executable, str(query), "--kb", str(kb_root), "--model", model])
     subprocess.run([sys.executable, str(query), "--kb", str(kb_root),
-                    "--cross-ref", "--synthesis", "--catalog"])
+                    "--cross-ref", "--synthesis", "--catalog", "--sdg-summary"])
 
 
 def _run_lint(kb_root: Path, framework_path: Path, deep: bool) -> int:

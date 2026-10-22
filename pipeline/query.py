@@ -192,6 +192,88 @@ def build_cross_ref(kb_root: Path):
     print(f"Cross-reference matrix written to {out_path}")
 
 
+def build_sdg_summary(kb_root: Path):
+    """Build a page showing a table with SDGs and their related report pages."""
+    docs_path = kb_root / "docs"
+    articles  = load_articles(docs_path)
+
+    # Collect articles by SDG
+    sdg_to_articles: dict[str, list[tuple[str, str]]] = {}  # sdg -> [(title, rel_path), ...]
+    for a in articles:
+        fm = a["frontmatter"]
+        if not fm:
+            continue
+        # Only include reports (content_type == "report")
+        if fm.get("content_type") != "report":
+            continue
+        title = fm.get("title", a["rel_path"].as_posix())
+        rel_path = a["rel_path"].as_posix()
+        sdgs = fm.get("sdg", [])
+        if not sdgs:
+            sdgs = ["Generic"]
+        for sdg in sdgs:
+            sdg_to_articles.setdefault(sdg, []).append((title, rel_path))
+
+    # Sort SDGs: Generic last, others by number
+    def sdg_sort_key(sdg: str):
+        if sdg == "Generic":
+            return (1, 0)
+        try:
+            num = int(sdg.replace("SDG-", "").replace("sdg-", ""))
+            return (0, num)
+        except ValueError:
+            return (0, 999)
+
+    sorted_sdgs = sorted(sdg_to_articles.keys(), key=sdg_sort_key)
+
+    # Render one section per SDG (goal name + bulleted list of related reports).
+    # A single mega-row table makes 50+ links unreadable; a section per goal keeps
+    # the page scannable and lets each report link render on its own line.
+    sections = []
+    for sdg in sorted_sdgs:
+        articles_list = sorted(sdg_to_articles[sdg], key=lambda x: x[0].lower())
+        name = SDG_NAMES.get(sdg, sdg)
+        heading = f"## {sdg} — {name}" if name != sdg else f"## {sdg}"
+        bullets = "\n".join(
+            f"- [{title}]({path})" for title, path in articles_list
+        )
+        sections.append(
+            f"{heading} ({len(articles_list)})\n\n{bullets}\n"
+        )
+
+    header = (
+        "---\ntitle: SDG Summary\ncontent_type: model\ngenerated: true\n"
+        f"date_updated: {datetime.date.today().isoformat()}\n---\n\n"
+        "# SDG Summary\n\n"
+        "Report pages grouped by the UN Sustainable Development Goals they "
+        "touch on. Reports with no SDG tag land under **Generic**.\n\n"
+    )
+    out_path = kb_root / "docs" / "sdg-summary.md"
+    out_path.write_text(header + "\n".join(sections), encoding="utf-8")
+    print(f"SDG summary written to {out_path}")
+
+
+SDG_NAMES = {
+    "SDG-1":  "No Poverty",
+    "SDG-2":  "Zero Hunger",
+    "SDG-3":  "Good Health and Well-being",
+    "SDG-4":  "Quality Education",
+    "SDG-5":  "Gender Equality",
+    "SDG-6":  "Clean Water and Sanitation",
+    "SDG-7":  "Affordable and Clean Energy",
+    "SDG-8":  "Decent Work and Economic Growth",
+    "SDG-9":  "Industry, Innovation and Infrastructure",
+    "SDG-10": "Reduced Inequalities",
+    "SDG-11": "Sustainable Cities and Communities",
+    "SDG-12": "Responsible Consumption and Production",
+    "SDG-13": "Climate Action",
+    "SDG-14": "Life Below Water",
+    "SDG-15": "Life on Land",
+    "SDG-16": "Peace, Justice and Strong Institutions",
+    "SDG-17": "Partnerships for the Goals",
+}
+
+
 # ── Layer 3: cross-domain synthesis pages ───────────────────────────────────────
 
 def _find_source_article(docs_path: Path, slug: str) -> Path | None:
@@ -294,11 +376,12 @@ def _update_insights_nav(mkdocs_yml: Path, generated: list[tuple[str, str]]):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--kb",        required=True)
-    parser.add_argument("--model",     choices=["semantic-model", "concept-map", "ontology"])
-    parser.add_argument("--cross-ref", action="store_true")
-    parser.add_argument("--synthesis", action="store_true")
-    parser.add_argument("--catalog",   action="store_true")
+    parser.add_argument("--kb",           required=True)
+    parser.add_argument("--model",        choices=["semantic-model", "concept-map", "ontology"])
+    parser.add_argument("--cross-ref",    action="store_true")
+    parser.add_argument("--synthesis",    action="store_true")
+    parser.add_argument("--catalog",      action="store_true")
+    parser.add_argument("--sdg-summary",  action="store_true")
     args = parser.parse_args()
 
     kb_root = Path(args.kb).resolve()
@@ -317,6 +400,8 @@ def main():
     if args.catalog:
         from catalog import build_catalog
         build_catalog(kb_root)
+    if args.sdg_summary:
+        build_sdg_summary(kb_root)
 
 
 if __name__ == "__main__":
