@@ -93,7 +93,7 @@ rewrite) and the tagger only fills missing required fields (`content_type`,
 *without* frontmatter, are treated as raw and go through the full rewrite + tag path.
 
 On success the pipeline:
-1. Extracts content (PDF → `marker-pdf`/`pypdf`; MD → read verbatim), then guards
+1. Extracts content (PDF → `docling`, with `pypdf` as last-resort fallback; MD → read verbatim), then guards
    readability — a PDF that extracts to near-empty text or high-volume mojibake
    (broken font map) fails loud to `pipeline/failed/` rather than being hallucinated over
 2. For raw sources, rewrites the content in Wikipedia style

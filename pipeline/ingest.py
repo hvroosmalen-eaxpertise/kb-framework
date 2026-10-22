@@ -52,18 +52,21 @@ def log(log_file: Path, level: str, message: str):
 # ── PDF extraction ─────────────────────────────────────────────────────────────
 
 def extract_markdown(pdf_path: Path) -> str:
-    """Convert PDF to raw Markdown using marker-pdf if available, else basic text."""
+    """Convert PDF to raw Markdown.
+
+    Primary: docling (preserves tables as pipe tables, keeps heading hierarchy
+    and reading order). Last-resort fallback: pypdf plain text, so an
+    environment without docling still ingests at today's quality. See
+    EurSuRA-kb/specs/2026-10-22-pdf-extractor-eval-results.md for the
+    comparison that picked docling.
+    """
     try:
-        result = subprocess.run(
-            ["marker_single", str(pdf_path), "--output_format", "markdown"],
-            capture_output=True, text=True, timeout=300
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            return result.stdout
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+        from docling.document_converter import DocumentConverter
+        result = DocumentConverter().convert(str(pdf_path))
+        return result.document.export_to_markdown()
+    except ImportError:
         pass
 
-    # Fallback: pypdf plain text extraction
     try:
         import pypdf
         reader = pypdf.PdfReader(str(pdf_path))
@@ -72,7 +75,7 @@ def extract_markdown(pdf_path: Path) -> str:
     except ImportError:
         pass
 
-    raise RuntimeError(f"No PDF extraction tool available. Install marker-pdf or pypdf.")
+    raise RuntimeError("No PDF extraction tool available. Install docling or pypdf.")
 
 
 def extract_content(src_path: Path) -> str:
@@ -667,11 +670,11 @@ def main():
             continue
 
     if ingested:
-        # Regenerate derived layers: cross-reference matrix + cross-domain synthesis (Layer 3)
+        # Regenerate derived layers: cross-reference matrix + cross-domain synthesis + SDG summary (Layer 3)
         query_script = framework_path / "pipeline" / "query.py"
         if query_script.exists():
             subprocess.run([sys.executable, str(query_script), "--kb", str(kb_root),
-                            "--cross-ref", "--synthesis", "--catalog"])
+                            "--cross-ref", "--synthesis", "--catalog", "--sdg-summary"])
         # Build and commit locally (no auto-push — the merged/synthesised diffs get reviewed)
         rebuild_script = framework_path / "pipeline" / "rebuild.py"
         if rebuild_script.exists():
