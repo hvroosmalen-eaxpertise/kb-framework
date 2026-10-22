@@ -172,21 +172,28 @@ def _norm_term(h: str) -> str:
     return re.sub(r"\s+", " ", h)
 
 
-def check_glossary_hygiene(articles: list[dict]) -> list[Finding]:
+def check_glossary_hygiene(articles: list[dict], allow_scoped: set[str] | None = None) -> list[Finding]:
     """Guard the glossary against the two regressions #18 cleaned up: near-duplicate
     term entries (short-form vs ``Term (ABBREV)``/plural) and trailing whitespace
-    (which splits ``Domain:`` buckets and runs compact fields together)."""
+    (which splits ``Domain:`` buckets and runs compact fields together).
+
+    ``allow_scoped`` is a set of normalised concept keys where distinct parenthetical
+    scopes (e.g. ``(ESRS)`` vs ``(VSME)``) are intentional, not duplicates."""
     gloss = next((a for a in articles if a["rel_path"].as_posix() == "glossary.md"), None)
     if not gloss:
         return []
+    allow_scoped = allow_scoped or set()
     findings: list[Finding] = []
     groups: dict[str, list[str]] = {}
     for term in _glossary_terms(articles):
         groups.setdefault(_norm_term(term), []).append(term)
-    for variants in groups.values():
-        if len(variants) > 1:
-            findings.append(("GLOSSDUP", "glossary.md",
-                             f"near-duplicate terms: {', '.join(variants)}"))
+    for key, variants in groups.items():
+        if len(variants) <= 1:
+            continue
+        if key in allow_scoped:
+            continue
+        findings.append(("GLOSSDUP", "glossary.md",
+                         f"near-duplicate terms: {', '.join(variants)}"))
     for i, line in enumerate(gloss["text"].split("\n"), 1):
         if line != line.rstrip():
             findings.append(("GLOSSFMT", "glossary.md",
@@ -199,6 +206,7 @@ def run_deterministic(kb_root: Path, config: dict) -> tuple[list[Finding], bool]
     lint_cfg = (config or {}).get("lint", {}) or {}
     hard_kinds = set(lint_cfg.get("hard_fail", DEFAULT_HARD_FAIL))
     ignore = {_norm(t) for t in lint_cfg.get("ignore_terms", [])}
+    allow_scoped = {_norm_term(t) for t in lint_cfg.get("allow_scoped_terms", [])}
 
     articles = load(kb_root)
     nav = nav_paths_from_mkdocs(kb_root)
@@ -207,7 +215,7 @@ def run_deterministic(kb_root: Path, config: dict) -> tuple[list[Finding], bool]
     findings += check_dangling_sources(articles)
     findings += check_stale(articles)
     findings += check_missing_xrefs(articles, ignore)
-    findings += check_glossary_hygiene(articles)
+    findings += check_glossary_hygiene(articles, allow_scoped)
 
     lines = [f"{k}\t{p}\t{d}" for k, p, d in findings]
     log_dir = kb_root / "logs"
