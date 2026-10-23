@@ -202,6 +202,26 @@ def check_glossary_hygiene(articles: list[dict], allow_scoped: set[str] | None =
     return findings
 
 
+def check_unreviewed(articles: list[dict]) -> list[Finding]:
+    """UNREVIEWED: a page with `status: published` must carry both
+    `reviewed_by:` and `reviewed_on:` frontmatter — the published label is a
+    promise that a reviewer has signed off on the content. Draft pages are
+    exempt; generated pages (`generated: true`) are exempt because they are
+    overwritten programmatically and sign-off happens on the source."""
+    findings: list[Finding] = []
+    for a in articles:
+        fm = a["frontmatter"] or {}
+        if str(fm.get("status", "")).lower() != "published":
+            continue
+        if fm.get("generated"):
+            continue
+        missing = [k for k in ("reviewed_by", "reviewed_on") if not fm.get(k)]
+        if missing:
+            findings.append(("UNREVIEWED", a["rel_path"].as_posix(),
+                             f"status: published but missing {', '.join(missing)}"))
+    return findings
+
+
 def run_deterministic(kb_root: Path, config: dict) -> tuple[list[Finding], bool]:
     lint_cfg = (config or {}).get("lint", {}) or {}
     hard_kinds = set(lint_cfg.get("hard_fail", DEFAULT_HARD_FAIL))
@@ -216,6 +236,7 @@ def run_deterministic(kb_root: Path, config: dict) -> tuple[list[Finding], bool]
     findings += check_stale(articles)
     findings += check_missing_xrefs(articles, ignore)
     findings += check_glossary_hygiene(articles, allow_scoped)
+    findings += check_unreviewed(articles)
 
     lines = [f"{k}\t{p}\t{d}" for k, p, d in findings]
     log_dir = kb_root / "logs"
