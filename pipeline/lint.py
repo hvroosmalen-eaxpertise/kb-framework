@@ -202,6 +202,23 @@ def check_glossary_hygiene(articles: list[dict], allow_scoped: set[str] | None =
     return findings
 
 
+def check_report_type(articles: list[dict]) -> list[Finding]:
+    """UNTAGGED_REPORT_TYPE (advisory): a report page (`content_type: report`)
+    should carry a `report_type:` tag so the reports section can be sub-grouped
+    and surfaced per-domain. This is advisory — missing values do not fail CI by
+    default — so a KB opts in by adding `UNTAGGED_REPORT_TYPE` to its
+    `lint.hard_fail` list only once its reports corpus is fully tagged."""
+    findings: list[Finding] = []
+    for a in articles:
+        fm = a["frontmatter"] or {}
+        if str(fm.get("content_type", "")).lower() != "report":
+            continue
+        if not fm.get("report_type"):
+            findings.append(("UNTAGGED_REPORT_TYPE", a["rel_path"].as_posix(),
+                             "report page has no report_type"))
+    return findings
+
+
 def check_unreviewed(articles: list[dict]) -> list[Finding]:
     """UNREVIEWED: a page with `status: published` must carry both
     `reviewed_by:` and `reviewed_on:` frontmatter — the published label is a
@@ -237,6 +254,7 @@ def run_deterministic(kb_root: Path, config: dict) -> tuple[list[Finding], bool]
     findings += check_missing_xrefs(articles, ignore)
     findings += check_glossary_hygiene(articles, allow_scoped)
     findings += check_unreviewed(articles)
+    findings += check_report_type(articles)
 
     lines = [f"{k}\t{p}\t{d}" for k, p, d in findings]
     log_dir = kb_root / "logs"
