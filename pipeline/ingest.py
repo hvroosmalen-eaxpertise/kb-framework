@@ -34,6 +34,7 @@ def resolve_paths(kb_root: Path):
         "inbox":     kb_root / "pipeline" / "inbox",
         "processed": kb_root / "pipeline" / "processed",
         "failed":    kb_root / "pipeline" / "failed",
+        "needs_ocr": kb_root / "pipeline" / "needs-ocr",
         "docs":      kb_root / "docs",
         "logs":      kb_root / "logs",
         "config":    kb_root / "config" / "kb.yaml",
@@ -102,6 +103,15 @@ def discover_sources(inbox: Path, file_arg: str | None):
 # English function words that are near-ubiquitous in real prose but essentially
 # absent from mojibake (a broken font/ToUnicode map maps glyphs to junk codepoints).
 _READABLE_MARKERS = (" the ", " and ", " of ", " to ", " that ", " is ", " in ")
+
+
+class NeedsOCRError(RuntimeError):
+    """PDF extraction yielded unusable text (image-only or broken font map).
+
+    Carried as its own type so the ingest exception handler can route the
+    source to pipeline/needs-ocr/ instead of pipeline/failed/, keeping OCR
+    candidates separable from genuine ingest errors.
+    """
 
 
 def extraction_looks_readable(text: str, min_ratio: float = 1 / 500) -> bool:
@@ -547,7 +557,7 @@ def ingest_source(src_path: Path, paths: dict, framework_path: Path, kb_config: 
         # image-only PDFs yield near-empty text. Both are caught here before spend.
         # Authored MD is trusted verbatim and skips the check.
         if src_path.suffix.lower() == ".pdf" and not extraction_looks_readable(raw_content):
-            raise RuntimeError(
+            raise NeedsOCRError(
                 f"unreadable extraction from {src_path.name} ({len(raw_content)} chars, "
                 f"likely a broken font encoding or image-only PDF) — needs OCR")
 
@@ -631,6 +641,11 @@ def ingest_source(src_path: Path, paths: dict, framework_path: Path, kb_config: 
 
         return out_path
 
+    except NeedsOCRError as e:
+        paths["needs_ocr"].mkdir(parents=True, exist_ok=True)
+        shutil.move(str(src_path), str(paths["needs_ocr"] / src_path.name))
+        log(ingest_log, "WARN", f"NEEDS_OCR {src_path.name}: {e}")
+        raise
     except Exception as e:
         shutil.move(str(src_path), str(paths["failed"] / src_path.name))
         log(ingest_log, "ERROR", f"FAILED {src_path.name}: {e}")
